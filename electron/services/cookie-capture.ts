@@ -1,4 +1,4 @@
-import { session } from 'electron'
+import { session, Session } from 'electron'
 
 export interface CapturedAuth {
   cookie: string
@@ -6,29 +6,35 @@ export interface CapturedAuth {
 }
 
 /**
- * 从 Electron session 中读取 Sugar BI 的 Cookie 和 CSRF Token
+ * 从指定 session 中读取 Sugar BI 的 Cookie 和 CSRF Token
+ * @param ses Electron session（默认 session 或 partition session）
+ * @param baseUrl 服务器地址
  */
-export async function captureAuth(baseUrl: string): Promise<CapturedAuth | null> {
-  const ses = session.defaultSession
+export async function captureAuthFromSession(
+  ses: Session,
+  baseUrl: string,
+): Promise<CapturedAuth | null> {
+  const url = new URL(baseUrl)
+  const domain = url.hostname
 
-  // 获取所有 cookie
-  const cookies = await ses.cookies.get({ domain: new URL(baseUrl).hostname })
+  // 获取该域名下所有 cookie
+  const cookies = await ses.cookies.get({ domain })
 
-  // 查找 sugarbisid cookie（登录成功标志）
-  const sugarCookie = cookies.find((c) => c.name === 'sugarbisid')
-  if (!sugarCookie) return null
+  if (cookies.length === 0) return null
 
   // 拼接所有 cookie
-  const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join('; ')
+  const cookieStr = cookies
+    .filter((c) => !c.httpOnly || c.name === 'sugarbisid' || c.name === 'csrf-token')
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ')
 
-  // 从 cookie 中提取 CSRF Token（Sugar BI 存储在 cookie 里）
+  if (!cookieStr) return null
+
+  // 尝试从 cookie 中提取 CSRF Token
   const csrfCookie = cookies.find((c) => c.name === 'csrf-token')
   const csrfToken = csrfCookie?.value || ''
 
-  return {
-    cookie: cookieStr,
-    csrfToken,
-  }
+  return { cookie: cookieStr, csrfToken }
 }
 
 /**

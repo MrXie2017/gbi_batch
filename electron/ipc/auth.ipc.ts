@@ -1,10 +1,12 @@
-import { BrowserWindow, ipcMain, session, BrowserWindowConstructorOptions } from 'electron'
-import * as path from 'path'
-import { captureAuth, clearSession, isLoggedIn } from '../services/cookie-capture'
-import { getConfig, setConfig } from '../services/config-store'
+import { BrowserWindow, ipcMain, session } from 'electron'
+import { captureAuthFromSession, clearSession } from '../services/cookie-capture'
+import { getConfig } from '../services/config-store'
 
 let loginWindow: BrowserWindow | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+// 拦截到的 CSRF Token
+let capturedCsrfToken = ''
 
 export function registerAuthIpc(
   ipc: typeof ipcMain,
@@ -12,11 +14,6 @@ export function registerAuthIpc(
 ): void {
   /** 打开登录窗口 */
   ipc.handle('auth:openLogin', async (_event, baseUrl: string) => {
-    const auth = await captureAuth(baseUrl)
-    if (auth && auth.csrfToken) {
-      return auth // 已登录，直接返回
-    }
-
     return new Promise((resolve, reject) => {
       if (loginWindow && !loginWindow.isDestroyed()) {
         loginWindow.focus()
@@ -25,7 +22,10 @@ export function registerAuthIpc(
       }
 
       const mainWindow = getMainWindow()
+      const url = new URL(baseUrl)
+      capturedCsrfToken = ''
 
+      // 使用 defaultSession（不设 partition）确保主进程可以读取 cookie
       loginWindow = new BrowserWindow({
         width: 1000,
         height: 700,
@@ -33,32 +33,58 @@ export function registerAuthIpc(
         modal: true,
         title: '登录 Sugar BI',
         webPreferences: {
-          // 登录窗口共享默认 session 以读取 cookie
-          partition: 'persist:sugarbi',
+          // 不设置 partition，使用 defaultSession
+          // 这样 session.defaultSession 就能读到登录后的 cookie
         },
+      })
+
+      const ses = loginWindow.webContents.session
+
+      // 拦截响应头，捕获 CSRF Token
+      ses.webRequest.onHeadersReceived((details, callback) => {
+        const csrfHeader = details.responseHeaders?.['csrf-token']?.[0]
+          || details.responseHeaders?.['Csrf-Token']?.[0]
+          || details.responseHeaders?.['CSRF-TOKEN']?.[0]
+        if (csrfHeader) {
+          capturedCsrfToken = csrfHeader
+        }
+        callback({ responseHeaders: details.responseHeaders })
       })
 
       loginWindow.loadURL(baseUrl)
 
       // 轮询检测 cookie（检测 sugarbisid 标志登录成功）
       pollTimer = setInterval(async () => {
-        const auth = await captureAuth(baseUrl)
-        if (auth && auth.cookie) {
-          if (pollTimer) clearInterval(pollTimer)
-          pollTimer = null
+        try {
+          const auth = await captureAuthFromSession(ses, baseUrl)
+          const hasSessionCookie = await ses.cookies.get({ domain: url.hostname })
+            .then((cookies) => cookies.some((c) => c.name === 'sugarbisid'))
 
-          // 通知渲染进程登录成功
-          mainWindow?.webContents.send('auth:loginSuccess', auth)
+          if (hasSessionCookie && auth) {
+            if (pollTimer) clearInterval(pollTimer)
+            pollTimer = null
 
-          // 关闭登录窗口
-          if (loginWindow && !loginWindow.isDestroyed()) {
-            loginWindow.close()
+            // 组合最终认证信息
+            const finalAuth = {
+              cookie: auth.cookie,
+              csrfToken: capturedCsrfToken || auth.csrfToken,
+            }
+
+            // 通知渲染进程登录成功
+            mainWindow?.webContents.send('auth:loginSuccess', finalAuth)
+
+            // 关闭登录窗口
+            if (loginWindow && !loginWindow.isDestroyed()) {
+              loginWindow.close()
+            }
+            loginWindow = null
+
+            resolve(finalAuth)
           }
-          loginWindow = null
-
-          resolve(auth)
+        } catch {
+          // 轮询出错，继续下一轮
         }
-      }, 1500)
+      }, 1000)
 
       loginWindow.on('closed', () => {
         if (pollTimer) clearInterval(pollTimer)
@@ -95,7 +121,7 @@ export function registerAuthIpc(
     const config = getConfig()
     const baseUrl = config.baseUrl
     if (!baseUrl) return null
-    return await captureAuth(baseUrl)
+    return await captureAuthFromSession(session.defaultSession, baseUrl)
   })
 
   /** 登出 */
