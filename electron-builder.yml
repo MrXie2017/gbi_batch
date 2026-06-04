@@ -1,0 +1,18 @@
+appId: com.sugarbi.batch-datasource
+productName: Sugar BI 批量添加数据源
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/**/*
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Sugar BI 批量添加数据源
