@@ -18,12 +18,14 @@ interface BatchState {
   itemResults: ItemResult[]
   /** 最终结果 */
   result: BatchResult | null
-  /** 是否跳过测试 */
-  skipTest: boolean
   /** 请求间隔（秒） */
   delay: number
   /** 是否已完成 */
   isCompleted: boolean
+  /** 选中的数据源类型名称 (如 "MySQL 5.X") */
+  selectedDbType: string
+  /** 数据源类型分组 key (sql | jdbc | http | nosql) */
+  dbTypeKey: string
 
   setItems: (items: DatasourceItem[], columns: string[]) => void
   setFilePath: (path: string | null) => void
@@ -32,9 +34,9 @@ interface BatchState {
   setProgress: (progress: BatchProgress) => void
   addItemResult: (result: ItemResult) => void
   setResult: (result: BatchResult) => void
-  setSkipTest: (skip: boolean) => void
   setDelay: (delay: number) => void
   setCompleted: (completed: boolean) => void
+  setDbType: (typeName: string, typeKey: string) => void
   reset: () => void
 }
 
@@ -47,9 +49,10 @@ const initialState = {
   progress: null,
   itemResults: [],
   result: null,
-  skipTest: false,
   delay: 1.0,
   isCompleted: false,
+  selectedDbType: 'MySQL 5.X',
+  dbTypeKey: 'sql',
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -72,11 +75,11 @@ export const useBatchStore = create<BatchState>((set) => ({
 
   setResult: (result) => set({ result, isRunning: false, isCompleted: true }),
 
-  setSkipTest: (skip) => set({ skipTest: skip }),
-
   setDelay: (delay) => set({ delay }),
 
   setCompleted: (completed) => set({ isCompleted: completed }),
+
+  setDbType: (typeName, typeKey) => set({ selectedDbType: typeName, dbTypeKey: typeKey }),
 
   reset: () => set({ ...initialState }),
 }))

@@ -40,8 +40,16 @@ export default function LoginStep() {
   }
 
   const handleWorkspaceSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const ws = workspaces.find((w) => w.id === e.target.value)
-    if (ws) selectWorkspace(ws)
+    const selectedId = e.target.value
+    console.log('[LoginStep] workspace selected:', selectedId)
+    console.log('[LoginStep] available workspaces:', JSON.stringify(workspaces))
+    const ws = workspaces.find((w) => w.id === selectedId)
+    if (ws) {
+      console.log('[LoginStep] found workspace:', JSON.stringify(ws))
+      selectWorkspace(ws)
+    } else {
+      console.log('[LoginStep] workspace NOT found for id:', selectedId)
+    }
   }
 
   return (

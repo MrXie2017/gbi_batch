@@ -1,15 +1,38 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 import { useBatchStore } from '../../stores/batch-store'
 import { useAuthStore } from '../../stores/auth-store'
 import { useIpc, useIpcListener } from '../../hooks/useIpc'
+
+/** 根据 dbTypeKey 获取预览列 */
+function getPreviewColumns(dbTypeKey: string) {
+  const base = [
+    { key: 'name', label: '数据源名称' },
+  ]
+  if (dbTypeKey === 'jdbc') {
+    return [...base, { key: 'url', label: 'JDBC URL' }, { key: 'username', label: '用户名' }]
+  }
+  if (dbTypeKey === 'http') {
+    return [...base, { key: 'host', label: '服务地址' }, { key: 'port', label: '端口' }, { key: 'username', label: '用户名' }]
+  }
+  // sql / nosql
+  return [
+    ...base,
+    { key: 'host', label: '数据库地址' },
+    { key: 'port', label: '端口' },
+    { key: 'database', label: '数据库名' },
+    { key: 'username', label: '用户名' },
+  ]
+}
 
 export default function BatchControls() {
   const api = useIpc()
   const { cookie, csrfToken, baseUrl, selectedWorkspace } = useAuthStore()
   const {
-    items, skipTest, delay, isRunning, isCompleted,
-    setSkipTest, setDelay, setRunning, setStopped,
+    items, delay, isRunning, isCompleted,
+    selectedDbType, dbTypeKey,
+    setDelay, setRunning, setStopped,
     addItemResult, setProgress, setResult,
+    itemResults,
   } = useBatchStore()
 
   // 注册 IPC 事件
@@ -33,10 +56,11 @@ export default function BatchControls() {
         cookie,
         csrfToken,
         groupId: selectedWorkspace.id,
-        sugarCompany: (selectedWorkspace as any).companyId || '',
+        sugarCompany: selectedWorkspace.companyId || '',
         items,
-        skipTest,
         delay,
+        dbTypeName: selectedDbType,
+        dbTypeKey,
       })
     } catch (err: any) {
       setRunning(false)
@@ -49,20 +73,65 @@ export default function BatchControls() {
     setStopped(true)
   }
 
+  const columns = getPreviewColumns(dbTypeKey)
+  const showPreview = !isRunning && !isCompleted
+
   return (
     <div className="card">
-      <div className="card-title">⚙️ 操作控制</div>
-      <div className="batch-controls">
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={skipTest}
-            onChange={(e) => setSkipTest(e.target.checked)}
-            disabled={isRunning}
-          />
-          跳过测试连接
-        </label>
+      <div className="card-title">
+        📋 {showPreview ? '数据预览' : '执行中'} · {selectedDbType} · {items.length} 条
+      </div>
 
+      {/* 数据预览 / 执行状态列表 */}
+      <div className="data-table-container">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              {columns.map((col) => (
+                <th key={col.key}>{col.label}</th>
+              ))}
+              {(isRunning || isCompleted) && (
+                <>
+                  <th>连接测试</th>
+                  <th>添加状态</th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => {
+              const result = itemResults.find((r) => r.index === i + 1)
+              return (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  {columns.map((col) => (
+                    <td key={col.key}>{(item as any)[col.key] || '-'}</td>
+                  ))}
+                  {(isRunning || isCompleted) && (
+                    <>
+                      <td>
+                        {!result ? '⏳' : result.testStatus === 'success' ? '✅ 成功'
+                          : result.testStatus === 'failed' ? `❌ ${result.testMsg}`
+                          : '⏭️ 跳过'}
+                      </td>
+                      <td>
+                        {!result ? '⏳' : result.addStatus === 'success' ? '✅ 已添加'
+                          : result.addStatus === 'failed' ? `❌ ${result.addMsg}`
+                          : result.addStatus === 'skipped' ? '⏭️ 已跳过'
+                          : '⏳'}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 操作控制栏 */}
+      <div className="batch-controls mt-4">
         <div className="control-group">
           <span>请求间隔:</span>
           <input
@@ -81,7 +150,7 @@ export default function BatchControls() {
 
         <div style={{ flex: 1 }} />
 
-        {!isRunning && !isCompleted && (
+        {showPreview && (
           <button className="btn btn-primary btn-lg" onClick={handleStart}>
             ▶ 开始执行 ({items.length} 条)
           </button>

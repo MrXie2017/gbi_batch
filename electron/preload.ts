@@ -11,7 +11,7 @@ export interface ElectronAPI {
   file: {
     selectFile: () => Promise<string | null>
     parseFile: (filePath: string) => Promise<{ columns: string[]; rows: any[]; total: number }>
-    createTemplate: (savePath: string) => Promise<string>
+    createTemplate: (savePath: string, dbTypeName: string, dbTypeKey: string) => Promise<string>
     exportReport: (data: any[], savePath: string) => Promise<string>
   }
   batch: {
@@ -30,8 +30,9 @@ export interface BatchParams {
   groupId: string
   sugarCompany: string
   items: DatasourceItem[]
-  skipTest: boolean
   delay: number
+  dbTypeName: string
+  dbTypeKey: string
 }
 
 export interface DatasourceItem {
@@ -43,6 +44,7 @@ export interface DatasourceItem {
   username: string
   password: string
   desc?: string
+  url?: string
 }
 
 export interface BatchProgress {
@@ -85,7 +87,8 @@ const electronAPI: ElectronAPI = {
   file: {
     selectFile: () => ipcRenderer.invoke('file:selectFile'),
     parseFile: (filePath) => ipcRenderer.invoke('file:parseFile', filePath),
-    createTemplate: (savePath) => ipcRenderer.invoke('file:createTemplate', savePath),
+    createTemplate: (savePath, dbTypeName, dbTypeKey) =>
+      ipcRenderer.invoke('file:createTemplate', savePath, dbTypeName, dbTypeKey),
     exportReport: (data, savePath) => ipcRenderer.invoke('file:exportReport', data, savePath),
   },
   batch: {

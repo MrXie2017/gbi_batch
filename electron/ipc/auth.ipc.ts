@@ -4,8 +4,6 @@ import { getConfig } from '../services/config-store'
 
 let loginWindow: BrowserWindow | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
-
-// 拦截到的 CSRF Token
 let capturedCsrfToken = ''
 
 export function registerAuthIpc(
@@ -22,75 +20,136 @@ export function registerAuthIpc(
       }
 
       const mainWindow = getMainWindow()
-      const url = new URL(baseUrl)
+      const sugarDomain = new URL(baseUrl).hostname
       capturedCsrfToken = ''
 
-      // 使用 defaultSession（不设 partition）确保主进程可以读取 cookie
       loginWindow = new BrowserWindow({
         width: 1000,
         height: 700,
         parent: mainWindow || undefined,
         modal: true,
         title: '登录 Sugar BI',
-        webPreferences: {
-          // 不设置 partition，使用 defaultSession
-          // 这样 session.defaultSession 就能读到登录后的 cookie
-        },
+        webPreferences: {},
       })
 
       const ses = loginWindow.webContents.session
 
       // 拦截响应头，捕获 CSRF Token
       ses.webRequest.onHeadersReceived((details, callback) => {
-        const csrfHeader = details.responseHeaders?.['csrf-token']?.[0]
-          || details.responseHeaders?.['Csrf-Token']?.[0]
-          || details.responseHeaders?.['CSRF-TOKEN']?.[0]
+        const headers = details.responseHeaders || {}
+        const csrfHeader = headers['csrf-token']?.[0]
+          || headers['Csrf-Token']?.[0]
+          || headers['CSRF-TOKEN']?.[0]
         if (csrfHeader) {
           capturedCsrfToken = csrfHeader
         }
         callback({ responseHeaders: details.responseHeaders })
       })
 
-      loginWindow.loadURL(baseUrl)
+      // === 登录成功检测策略 ===
+      // Sugar BI 使用外部认证系统：
+      //   baseUrl(/groups) → 跳转到认证系统登录页 → 登录成功 → 跳回 Sugar BI 页面
+      // 检测方式：URL 回到 Sugar BI 域名 + 有 sugarbisid cookie
 
-      // 轮询检测 cookie（检测 sugarbisid 标志登录成功）
-      pollTimer = setInterval(async () => {
+      let initialCookieSnapshot: Set<string> = new Set()
+      let snapshotReady = false
+      let loginCompleted = false
+
+      // 监听 URL 变化，检测是否跳回 Sugar BI
+      loginWindow.webContents.on('did-navigate', async (_event, navUrl) => {
+        await checkLoginSuccess(navUrl)
+      })
+      loginWindow.webContents.on('did-navigate-in-page', async (_event, navUrl) => {
+        await checkLoginSuccess(navUrl)
+      })
+
+      // 页面加载完成时记录初始 cookie
+      loginWindow.webContents.on('did-finish-load', async () => {
+        const currentUrl = loginWindow?.webContents?.getURL()
+        if (!currentUrl) return
+
+        // 如果当前在 Sugar BI 域名上，检查是否已登录
         try {
+          const navHost = new URL(currentUrl).hostname
+          if (navHost === sugarDomain) {
+            await checkLoginSuccess(currentUrl)
+          }
+        } catch { /* ignore */ }
+
+        // 记录初始 cookie 快照（只在第一次加载时）
+        if (!snapshotReady) {
+          await new Promise((r) => setTimeout(r, 2000))
+          if (!loginWindow || loginWindow.isDestroyed()) return
+          try {
+            const cookies = await ses.cookies.get({ domain: sugarDomain })
+            initialCookieSnapshot = new Set(cookies.map((c) => `${c.name}=${c.value}`))
+            snapshotReady = true
+          } catch { /* ignore */ }
+        }
+      })
+
+      async function checkLoginSuccess(currentUrl: string) {
+        if (loginCompleted) return
+        try {
+          const navHost = new URL(currentUrl).hostname
+          // 只在 Sugar BI 域名上检测
+          if (navHost !== sugarDomain) return
+
+          const cookies = await ses.cookies.get({ domain: sugarDomain })
+          const hasSugarSession = cookies.some((c) => c.name === 'sugarbisid')
+
+          if (!hasSugarSession) return
+
+          // 如果快照还没准备好，说明是初始加载就有 cookie（可能是已登录状态）
+          // 直接使用。如果快照已准备好，检查是否是新增 cookie
+          if (snapshotReady) {
+            const isNew = cookies.some(
+              (c) => c.name === 'sugarbisid' && !initialCookieSnapshot.has(`${c.name}=${c.value}`),
+            )
+            if (!isNew) return
+          }
+
+          // 登录成功！
+          loginCompleted = true
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+
           const auth = await captureAuthFromSession(ses, baseUrl)
-          const hasSessionCookie = await ses.cookies.get({ domain: url.hostname })
-            .then((cookies) => cookies.some((c) => c.name === 'sugarbisid'))
+          const finalAuth = {
+            cookie: auth?.cookie || cookies.map((c) => `${c.name}=${c.value}`).join('; '),
+            csrfToken: capturedCsrfToken || auth?.csrfToken || '',
+          }
 
-          if (hasSessionCookie && auth) {
-            if (pollTimer) clearInterval(pollTimer)
-            pollTimer = null
+          mainWindow?.webContents.send('auth:loginSuccess', finalAuth)
 
-            // 组合最终认证信息
-            const finalAuth = {
-              cookie: auth.cookie,
-              csrfToken: capturedCsrfToken || auth.csrfToken,
-            }
-
-            // 通知渲染进程登录成功
-            mainWindow?.webContents.send('auth:loginSuccess', finalAuth)
-
-            // 关闭登录窗口
+          // 短暂延迟后关闭登录窗口，确保 cookie 已完全同步
+          setTimeout(() => {
             if (loginWindow && !loginWindow.isDestroyed()) {
               loginWindow.close()
             }
             loginWindow = null
+          }, 500)
 
-            resolve(finalAuth)
+          resolve(finalAuth)
+        } catch { /* ignore */ }
+      }
+
+      loginWindow.loadURL(baseUrl)
+
+      // 备用轮询：每 2 秒检查一次（处理 SPA 内导航等场景）
+      pollTimer = setInterval(async () => {
+        if (loginCompleted || !snapshotReady) return
+        try {
+          const currentUrl = loginWindow?.webContents?.getURL()
+          if (currentUrl) {
+            await checkLoginSuccess(currentUrl)
           }
-        } catch {
-          // 轮询出错，继续下一轮
-        }
-      }, 1000)
+        } catch { /* ignore */ }
+      }, 2000)
 
       loginWindow.on('closed', () => {
-        if (pollTimer) clearInterval(pollTimer)
-        pollTimer = null
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
         loginWindow = null
-        resolve(null) // 用户关闭了登录窗口
+        resolve(null)
       })
     })
   })
@@ -98,7 +157,8 @@ export function registerAuthIpc(
   /** 获取工作空间列表 */
   ipc.handle('auth:getWorkspaces', async (_event, baseUrl: string, cookie: string, csrfToken: string) => {
     try {
-      const resp = await fetch(`${baseUrl}/api/group/my`, {
+      const origin = new URL(baseUrl).origin
+      const resp = await fetch(`${origin}/api/group/my`, {
         headers: {
           accept: 'application/json, text/plain, */*',
           'content-type': 'application/json',
@@ -107,11 +167,18 @@ export function registerAuthIpc(
         },
       })
       const data = (await resp.json()) as { status: number; data?: any[] }
-      if (data.status === 0 && Array.isArray(data.data)) {
-        return data.data
+      console.log('[auth] getWorkspaces raw response:', JSON.stringify(data).substring(0, 500))
+      if (data.status === 0 && Array.isArray(data.data) && data.data.length > 0) {
+        console.log('[auth] first workspace keys:', Object.keys(data.data[0]))
+        return data.data.map((ws: any) => ({
+          id: ws.hash || ws.id?.toString() || '',
+          name: ws.name || ws.groupName || '',
+          companyId: ws.token || ws.companyId || ws.sugarCompany || '',
+        }))
       }
       return []
-    } catch {
+    } catch (err) {
+      console.log('[auth] getWorkspaces error:', err)
       return []
     }
   })

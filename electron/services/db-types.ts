@@ -2,6 +2,117 @@
  * 数据库类型映射表 - 从 Python 版本移植
  */
 
+/** 模板字段定义 */
+export interface TemplateField {
+  key: string         // DatasourceItem 中的字段名
+  label: string       // Excel 列标题
+  required: boolean
+  defaultVal?: string
+}
+
+/** 数据库类型分组 - 不同分组对应不同的模板字段 */
+export interface DbFieldGroup {
+  key: 'sql' | 'jdbc' | 'http' | 'nosql'
+  label: string
+  dbTypes: string[]
+  fields: TemplateField[]
+}
+
+/**
+ * 数据库类型分组定义
+ * - sql:  标准数据库 (host + port + database + user + pass)
+ * - jdbc: JDBC URL 连接 (url + user + pass)
+ * - http: HTTP/API 服务 (host + port + user + pass, 无 database)
+ * - nosql: NoSQL 数据库 (host + port + database可选 + user + pass)
+ */
+export const DB_FIELD_GROUPS: DbFieldGroup[] = [
+  {
+    key: 'sql',
+    label: '标准数据库连接',
+    dbTypes: [
+      'MySQL 5.X', 'MySQL 8', 'MariaDB', 'PostgreSQL', 'CockroachDB',
+      'Oracle', 'SQL Server', 'DM-达梦', 'KingbaseES-人大金仓',
+      'Greenplum', 'TiDB', 'Clickhouse', 'Apache Doris',
+      'OceanBase(阿里云)', 'Hologres(阿里云)', 'GBase 8a-南大通用',
+      'openGauss-华为GaussDB', 'GaussDB(DWS)-华为数仓',
+      'HGDB-瀚高数据库', 'HGDB-瀚高安全版数据库',
+      'Exasol', 'Vertica', 'Teradata', 'Snowflake',
+      'IBM DB2', 'SAP HANA', 'Apache Spark SQL',
+      'Presto/Trino', 'Apache Impala', 'Apache Kylin',
+      'GaiaDB', 'MaxCompute(阿里云)', 'Amazon Athena',
+      'Apache Hive',
+    ],
+    fields: [
+      { key: 'name', label: '数据源名称', required: true },
+      { key: 'host', label: '数据库地址', required: true },
+      { key: 'port', label: '端口', required: true, defaultVal: '3306' },
+      { key: 'database', label: '数据库名', required: true },
+      { key: 'username', label: '用户名', required: true },
+      { key: 'password', label: '密码', required: true },
+      { key: 'desc', label: '描述', required: false },
+    ],
+  },
+  {
+    key: 'jdbc',
+    label: 'JDBC URL 连接',
+    dbTypes: [
+      'Apache Hive (JDBC URL)', 'Apache Impala (JDBC URL)',
+      'GBase (JDBC URL)', 'Apache Druid (JDBC URL)', 'JDBC 通用数据库',
+    ],
+    fields: [
+      { key: 'name', label: '数据源名称', required: true },
+      { key: 'url', label: 'JDBC URL', required: true },
+      { key: 'username', label: '用户名', required: true },
+      { key: 'password', label: '密码', required: false },
+      { key: 'desc', label: '描述', required: false },
+    ],
+  },
+  {
+    key: 'http',
+    label: 'HTTP/API 服务',
+    dbTypes: [
+      'Prometheus', 'Graphite', 'OpenTSDB', 'Baidu TSDB',
+      'ElasticSearch 1.x+', 'ElasticSearch 6.3+',
+      'InfluxDB 1.X', 'InfluxDB 2.X', 'Apache Druid',
+    ],
+    fields: [
+      { key: 'name', label: '数据源名称', required: true },
+      { key: 'host', label: '服务地址', required: true },
+      { key: 'port', label: '端口', required: true, defaultVal: '9200' },
+      { key: 'username', label: '用户名', required: false },
+      { key: 'password', label: '密码', required: false },
+      { key: 'desc', label: '描述', required: false },
+    ],
+  },
+  {
+    key: 'nosql',
+    label: 'NoSQL 数据库',
+    dbTypes: ['Mongodb', 'Redis', 'Cassandra'],
+    fields: [
+      { key: 'name', label: '数据源名称', required: true },
+      { key: 'host', label: '数据库地址', required: true },
+      { key: 'port', label: '端口', required: true, defaultVal: '27017' },
+      { key: 'database', label: '数据库名', required: false },
+      { key: 'username', label: '用户名', required: false },
+      { key: 'password', label: '密码', required: false },
+      { key: 'desc', label: '描述', required: false },
+    ],
+  },
+]
+
+/** 根据 DB 类型名称查找对应的字段分组 */
+export function getFieldGroup(dbTypeName: string): DbFieldGroup {
+  for (const group of DB_FIELD_GROUPS) {
+    if (group.dbTypes.includes(dbTypeName)) return group
+  }
+  return DB_FIELD_GROUPS[0] // 默认 sql
+}
+
+/** 根据分组 key 查找字段分组 */
+export function getFieldGroupByKey(key: string): DbFieldGroup {
+  return DB_FIELD_GROUPS.find((g) => g.key === key) || DB_FIELD_GROUPS[0]
+}
+
 export const DB_TYPE_MAP: Record<string, number> = {
   'Amazon Athena': 51,
   'Apache Doris': 1,

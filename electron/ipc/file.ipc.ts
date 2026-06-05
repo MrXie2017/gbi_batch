@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { parseExcel, createTemplate, exportReport } from '../services/excel-parser'
+import { getFieldGroup } from '../services/db-types'
 
 export function registerFileIpc(
   ipc: typeof ipcMain,
@@ -25,15 +26,22 @@ export function registerFileIpc(
     return parseExcel(filePath)
   })
 
-  /** 生成模板文件 */
-  ipc.handle('file:createTemplate', async (_event, defaultPath: string) => {
+  /** 生成模板文件 - 根据数据源类型动态生成 */
+  ipc.handle('file:createTemplate', async (
+    _event,
+    defaultPath: string,
+    dbTypeName: string,
+    dbTypeKey: string,
+  ) => {
     const result = await dialog.showSaveDialog({
       title: '保存模板文件',
-      defaultPath: defaultPath || 'datasource_template.xlsx',
+      defaultPath: defaultPath || `${dbTypeName}_template.xlsx`,
       filters: [{ name: 'Excel 文件', extensions: ['xlsx'] }],
     })
     if (result.canceled || !result.filePath) return ''
-    return createTemplate(result.filePath)
+
+    const group = getFieldGroup(dbTypeName)
+    return createTemplate(result.filePath, group.fields, dbTypeName)
   })
 
   /** 导出报告 */

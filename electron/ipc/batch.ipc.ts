@@ -10,6 +10,7 @@ interface BatchItem {
   username: string
   password: string
   desc?: string
+  url?: string
 }
 
 interface BatchParams {
@@ -19,8 +20,9 @@ interface BatchParams {
   groupId: string
   sugarCompany: string
   items: BatchItem[]
-  skipTest: boolean
   delay: number
+  dbTypeName: string
+  dbTypeKey: string
 }
 
 let stopFlag = false
@@ -41,6 +43,9 @@ export function registerBatchIpc(
       params.sugarCompany,
     )
 
+    // 执行前刷新 CSRF Token
+    await client.refreshCsrfToken()
+
     const total = params.items.length
     let success = 0
     let failed = 0
@@ -54,14 +59,16 @@ export function registerBatchIpc(
         数据源名称: item.name,
         类型: item.type,
         数据库地址: item.host,
+        服务地址: item.host,
         端口: item.port,
         数据库名: item.database,
         用户名: item.username,
         密码: item.password,
         描述: item.desc || '',
+        'JDBC URL': item.url || '',
       }
 
-      const payload = SugarApiClient.buildPayload(row)
+      const payload = SugarApiClient.buildPayload(row, params.dbTypeKey, params.dbTypeName)
 
       const itemResult: any = {
         index: i + 1,
@@ -80,19 +87,17 @@ export function registerBatchIpc(
         status: 'running',
       })
 
-      // 步骤1: 测试连接
-      if (!params.skipTest) {
-        const testResult = await client.testConnection(payload)
-        itemResult.testStatus = testResult.status === 0 ? 'success' : 'failed'
-        itemResult.testMsg = testResult.msg || ''
+      // 步骤1: 测试连接（必须通过）
+      const testResult = await client.testConnection(payload)
+      itemResult.testStatus = testResult.status === 0 ? 'success' : 'failed'
+      itemResult.testMsg = testResult.msg || ''
 
-        if (testResult.status !== 0) {
-          itemResult.addStatus = 'skipped'
-          itemResult.addMsg = `测试失败: ${itemResult.testMsg}`
-          skipped++
-          mainWindow?.webContents.send('batch:itemResult', itemResult)
-          continue
-        }
+      if (testResult.status !== 0) {
+        itemResult.addStatus = 'skipped'
+        itemResult.addMsg = `测试失败: ${itemResult.testMsg}`
+        skipped++
+        mainWindow?.webContents.send('batch:itemResult', itemResult)
+        continue
       }
 
       // 步骤2: 添加数据源

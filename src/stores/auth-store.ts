@@ -32,7 +32,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoggedIn: false,
   cookie: '',
   csrfToken: '',
-  baseUrl: 'http://200.1.1.97:8001',
+  baseUrl: 'http://200.1.1.97:8001/groups',
   workspaces: [],
   selectedWorkspace: null,
   isLoggingIn: false,

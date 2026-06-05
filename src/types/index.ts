@@ -9,7 +9,7 @@ export interface ElectronAPI {
   file: {
     selectFile: () => Promise<string | null>
     parseFile: (filePath: string) => Promise<ParseResult>
-    createTemplate: (savePath: string) => Promise<string>
+    createTemplate: (savePath: string, dbTypeName: string, dbTypeKey: string) => Promise<string>
     exportReport: (data: any[], savePath: string) => Promise<string>
   }
   batch: {
@@ -42,6 +42,7 @@ export interface DatasourceItem {
   username: string
   password: string
   desc?: string
+  url?: string      // JDBC/HTTP 类型使用
 }
 
 export interface BatchParams {
@@ -51,8 +52,9 @@ export interface BatchParams {
   groupId: string
   sugarCompany: string
   items: DatasourceItem[]
-  skipTest: boolean
   delay: number
+  dbTypeName: string   // 选中的数据源类型名称
+  dbTypeKey: string    // 分组 key: sql | jdbc | http | nosql
 }
 
 export interface BatchProgress {

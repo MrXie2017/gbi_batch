@@ -1,5 +1,6 @@
 import * as xlsx from 'xlsx'
 import * as path from 'path'
+import type { TemplateField } from './db-types'
 
 export interface ParseResult {
   columns: string[]
@@ -11,7 +12,6 @@ export interface ParseResult {
  * 解析 Excel/CSV 文件
  */
 export function parseExcel(filePath: string): ParseResult {
-  const ext = path.extname(filePath).toLowerCase()
   const wb = xlsx.readFile(filePath, { type: 'file' })
   const ws = wb.Sheets[wb.SheetNames[0]]
   const jsonData = xlsx.utils.sheet_to_json<Record<string, any>>(ws)
@@ -29,25 +29,43 @@ export function parseExcel(filePath: string): ParseResult {
 }
 
 /**
- * 生成模板文件
+ * 生成模板文件 - 根据字段分组动态生成不同列
  */
-export function createTemplate(savePath: string): string {
-  const columns = ['数据源名称', '类型', '数据库地址', '端口', '数据库名', '用户名', '密码', '描述']
-  const sampleData = [
-    ['测试MySQL', 'MySQL 5.X', '192.168.1.100', '3306', 'test_db', 'root', 'password', '测试数据库'],
-    ['生产PG', 'PostgreSQL', '192.168.1.200', '5432', 'prod_db', 'postgres', 'password', '生产PG'],
-    ['数据仓库CH', 'Clickhouse', '192.168.1.300', '8123', 'dw_db', 'default', 'password', 'Clickhouse'],
-  ]
+export function createTemplate(
+  savePath: string,
+  fields: TemplateField[],
+  dbTypeName: string,
+): string {
+  const columns = fields.map((f) => f.label)
 
-  const ws = xlsx.utils.aoa_to_sheet([columns, ...sampleData])
+  // 生成示例数据行
+  const sampleRow: string[] = fields.map((f) => {
+    if (f.defaultVal) return f.defaultVal
+    switch (f.key) {
+      case 'name': return `测试${dbTypeName}`
+      case 'host': return fields.some((ff) => ff.key === 'url') ? '192.168.1.100' : '192.168.1.100'
+      case 'port': return '3306'
+      case 'database': return 'test_db'
+      case 'username': return 'root'
+      case 'password': return 'password'
+      case 'url': return `jdbc:mysql://192.168.1.100:3306/test_db`
+      case 'desc': return '测试数据源'
+      default: return ''
+    }
+  })
+
+  const ws = xlsx.utils.aoa_to_sheet([columns, sampleRow])
   const wb = xlsx.utils.book_new()
   xlsx.utils.book_append_sheet(wb, ws, '数据源')
 
   // 设置列宽
-  ws['!cols'] = [
-    { wch: 15 }, { wch: 15 }, { wch: 18 }, { wch: 8 },
-    { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 20 },
-  ]
+  ws['!cols'] = fields.map((f) => {
+    if (f.key === 'url') return { wch: 50 }
+    if (f.key === 'desc') return { wch: 20 }
+    if (f.key === 'name') return { wch: 15 }
+    if (f.key === 'port') return { wch: 8 }
+    return { wch: 18 }
+  })
 
   xlsx.writeFile(wb, savePath)
   return savePath
