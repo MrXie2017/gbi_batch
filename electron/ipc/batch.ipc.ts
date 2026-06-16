@@ -24,6 +24,7 @@ interface BatchParams {
   delay: number
   dbTypeName: string
   dbTypeKey: string
+  fieldConfigMap?: Record<string, any>
 }
 
 let stopFlag = false
@@ -138,7 +139,7 @@ export function registerBatchIpc(
       }
 
       try {
-        await createModelsForDatasource(client, databaseHash, dbType, item.name, itemResult, mainWindow)
+        await createModelsForDatasource(client, databaseHash, dbType, item.name, itemResult, mainWindow, params.fieldConfigMap)
       } catch (err: any) {
         itemResult.modelStatus = 'failed'
         itemResult.modelMsg = `模型创建异常: ${err.message}`
@@ -184,6 +185,7 @@ async function createModelsForDatasource(
   datasourceName: string,
   itemResult: any,
   mainWindow: BrowserWindow | null,
+  fieldConfigMap: Record<string, any> = {},
 ): Promise<void> {
   // 获取表列表
   const tableListResult = await client.getTableList(databaseHash)
@@ -241,6 +243,8 @@ async function createModelsForDatasource(
         dbType,
         schemaResult.data,
         tableName,
+        datasourceName,
+        fieldConfigMap,
       )
 
       const saveResult = await client.saveDataModel(savePayload)
