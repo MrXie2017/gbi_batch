@@ -34,3 +34,65 @@ export function parseHidden(raw: string): boolean {
   const v = (raw || '').trim().toLowerCase()
   return ['是', 'y', '1', 'true'].includes(v)
 }
+
+/** 列索引常量（sheet2 固定列顺序，0-based） */
+const COL = {
+  DB: 0, TABLE: 1, FIELD: 2, ALIAS: 3, COMMENT: 4,
+  ROLE: 5, HIDDEN: 6, UNIT: 7,
+} as const
+
+/** 判断一行字段配置是否「全空」（无可覆盖项），用于跳过无意义行 */
+function isEmptyConfig(cells: string[]): boolean {
+  const text = [COL.ALIAS, COL.COMMENT, COL.ROLE, COL.HIDDEN, COL.UNIT]
+    .map((i) => (cells[i] || '').trim())
+    .join('')
+  return text.length === 0
+}
+
+/**
+ * 将 sheet2 的原始行（string[][]，不含表头）构建为 FieldConfigMap。
+ * - 库名/表名/字段名 任一为空 → 跳过该行
+ * - 全部可配置项为空 → 跳过（无可覆盖项）
+ * - 重复 key → 后者覆盖前者
+ */
+export function buildFieldConfigMap(rows: string[][]): FieldConfigMap {
+  const map: FieldConfigMap = {}
+  for (const cells of rows) {
+    const db = (cells[COL.DB] || '').trim()
+    const table = (cells[COL.TABLE] || '').trim()
+    const field = (cells[COL.FIELD] || '').trim()
+    if (!db || !table || !field) continue
+    if (isEmptyConfig(cells)) continue
+
+    const cfg: FieldConfig = {}
+    const alias = (cells[COL.ALIAS] || '').trim()
+    const comment = (cells[COL.COMMENT] || '').trim()
+    const role = parseRole(cells[COL.ROLE] || '')
+    const hidden = parseHidden(cells[COL.HIDDEN] || '')
+    const unit = (cells[COL.UNIT] || '').trim()
+
+    if (alias) cfg.alias = alias
+    if (comment) cfg.comment = comment
+    if (role) cfg.role = role
+    cfg.hidden = hidden // parseHidden 始终返回 boolean，无需守卫
+    if (unit) cfg.unit = unit
+
+    map[fieldKey(db, table, field)] = cfg
+  }
+  return map
+}
+
+/** 按「数据库名|表名|字段名」查找配置；未命中返回 undefined */
+export function matchField(
+  map: FieldConfigMap,
+  databaseName: string,
+  tableName: string,
+  fieldName: string,
+): FieldConfig | undefined {
+  // 与 buildFieldConfigMap 构建 key 时一致地 trim，避免查找参数带空格时静默 miss
+  return map[fieldKey(
+    (databaseName || '').trim(),
+    (tableName || '').trim(),
+    (fieldName || '').trim(),
+  )]
+}
