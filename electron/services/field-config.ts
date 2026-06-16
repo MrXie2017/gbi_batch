@@ -5,6 +5,7 @@ export interface FieldConfig {
   role?: 'dimension' | 'measure' // 维度/度量
   hidden?: boolean
   unit?: string // 仅度量生效
+  geo?: 'geo' | 'lng' | 'lat' // 标记为地理信息（仅维度生效）：geo=地名/区域, lng=经度, lat=纬度
 }
 
 /** 匹配键 → 字段配置 */
@@ -35,15 +36,29 @@ export function parseHidden(raw: string): boolean {
   return ['是', 'y', '1', 'true'].includes(v)
 }
 
+/**
+ * 解析「标记地理信息」列。返回 'geo'/'lng'/'lat'；null 表示未配置或「不标记」，不覆盖。
+ * 写入 dimension.convert.label（仅维度生效）：geo=地名/区域, lng=经度, lat=纬度。
+ * 兼容中文与英文（trim + 大小写不敏感）。
+ */
+export function parseGeo(raw: string): 'geo' | 'lng' | 'lat' | null {
+  const v = (raw || '').trim().toLowerCase()
+  if (!v) return null
+  if (['地名/区域', '地名', '区域', 'geo'].includes(v)) return 'geo'
+  if (['经度', 'lng', 'longitude'].includes(v)) return 'lng'
+  if (['纬度', 'lat', 'latitude'].includes(v)) return 'lat'
+  return null // 含「不标记」「无」「none」及未知值
+}
+
 /** 列索引常量（sheet2 固定列顺序，0-based） */
 const COL = {
   DB: 0, TABLE: 1, FIELD: 2, ALIAS: 3, COMMENT: 4,
-  ROLE: 5, HIDDEN: 6, UNIT: 7,
+  ROLE: 5, HIDDEN: 6, UNIT: 7, GEO: 8,
 } as const
 
 /** 判断一行字段配置是否「全空」（无可覆盖项），用于跳过无意义行 */
 function isEmptyConfig(cells: string[]): boolean {
-  const text = [COL.ALIAS, COL.COMMENT, COL.ROLE, COL.HIDDEN, COL.UNIT]
+  const text = [COL.ALIAS, COL.COMMENT, COL.ROLE, COL.HIDDEN, COL.UNIT, COL.GEO]
     .map((i) => (cells[i] || '').trim())
     .join('')
   return text.length === 0
@@ -70,12 +85,14 @@ export function buildFieldConfigMap(rows: string[][]): FieldConfigMap {
     const role = parseRole(cells[COL.ROLE] || '')
     const hidden = parseHidden(cells[COL.HIDDEN] || '')
     const unit = (cells[COL.UNIT] || '').trim()
+    const geo = parseGeo(cells[COL.GEO] || '')
 
     if (alias) cfg.alias = alias
     if (comment) cfg.comment = comment
     if (role) cfg.role = role
     cfg.hidden = hidden // parseHidden 始终返回 boolean，无需守卫
     if (unit) cfg.unit = unit
+    if (geo) cfg.geo = geo
 
     const key = fieldKey(db, table, field)
     if (map[key]) {

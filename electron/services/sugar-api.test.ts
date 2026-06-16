@@ -94,4 +94,27 @@ describe('buildModelSavePayload 字段覆盖', () => {
     const miss = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', '多表数据库测试1', map)
     expect(miss.config.dimensions.f1.alias).toBe('region')
   })
+
+  it('geo 标记写入 dimension.convert.label（地名/区域=geo）', () => {
+    const schema = [field('f1', 'region', 'string')]
+    const map: FieldConfigMap = {
+      [`${DB}|${TABLE}|region`]: { geo: 'geo' },
+    }
+    const payload = SugarApiClient.buildModelSavePayload('hash', TABLE, DB, 0, schema, TABLE, DB, map)
+    expect(payload.config.dimensions.f1.convert.label).toBe('geo')
+  })
+
+  it('geo=lng/lat 强制归维度并写入对应 label；未配 geo 的数值字段仍归度量', () => {
+    // lng/lat 字段通常是 float，默认归度量；但有 geo → 强制维度（与源码 convertDataLabel 一致）
+    const schema = [field('f1', 'lng', 'float'), field('f2', 'lat', 'float'), field('f3', 'amt', 'int')]
+    const map: FieldConfigMap = {
+      [`${DB}|${TABLE}|lng`]: { geo: 'lng' },
+      [`${DB}|${TABLE}|lat`]: { geo: 'lat' },
+    }
+    const payload = SugarApiClient.buildModelSavePayload('hash', TABLE, DB, 0, schema, TABLE, DB, map)
+    expect(payload.config.dimensions.f1.convert.label).toBe('lng')
+    expect(payload.config.dimensions.f2.convert.label).toBe('lat')
+    expect(Object.keys(payload.config.measures)).toContain('f3') // 未配 geo 的 int → 度量
+    expect(payload.config.dimensions.f3).toBeUndefined()
+  })
 })

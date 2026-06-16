@@ -83,8 +83,35 @@ export function createTemplate(
     return { wch: 18 }
   })
 
+  // sheet2：字段配置模板（与 sheet1 配合使用；解析按列索引匹配）
+  appendFieldConfigTemplate(wb)
+
   xlsx.writeFile(wb, savePath)
   return savePath
+}
+
+/**
+ * 向工作簿追加 sheet2「字段配置」模板。
+ * 固定 9 列 + 3 行示例。注意「数据库名」需与 sheet1 的数据库名一致才能匹配。
+ * 第 9 列「标记地理信息」对应 dimension.convert.label：地名/区域=geo, 经度=lng, 纬度=lat，仅维度生效。
+ * 解析按列索引（buildFieldConfigMap），表头文字仅作展示。
+ */
+function appendFieldConfigTemplate(wb: xlsx.WorkBook): void {
+  const headers = [
+    '数据库名', '表名', '字段名', '别名', '字段备注',
+    '维度或度量', '在分析中隐藏', '字段单位', '标记地理信息',
+  ]
+  const examples: string[][] = [
+    ['your_db', 'your_table', 'region', '行政区', '', '维度', '', '', '地名/区域'],
+    ['your_db', 'your_table', 'lng', '经度', '', '维度', '', '', '经度'],
+    ['your_db', 'your_table', 'amount', '金额', '订单金额', '度量', '是', '元', ''],
+  ]
+  const ws2 = xlsx.utils.aoa_to_sheet([headers, ...examples])
+  ws2['!cols'] = [
+    { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 18 },
+    { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 },
+  ]
+  xlsx.utils.book_append_sheet(wb, ws2, '字段配置')
 }
 
 /**

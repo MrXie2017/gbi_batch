@@ -441,8 +441,10 @@ export class SugarApiClient {
     for (const field of schema) {
       const cfg = matchField(fieldConfigMap, databaseName, tableName, field.name)
 
-      // 归类：显式 role 优先；否则沿用自动规则（string→维度, 其余→度量）
-      const isDimension = cfg?.role ? cfg.role === 'dimension' : field.type === 'string'
+      // 归类：显式 role > 有 geo(地理标记仅维度生效，源码会把度量转为维度) > 自动(string→维度, 其余→度量)
+      const isDimension = cfg?.role
+        ? cfg.role === 'dimension'
+        : cfg?.geo ? true : field.type === 'string'
 
       // alias/comment 空串 = 不覆盖（用 ||）；hidden 是布尔，用 ?? 保留显式 false
       const alias = cfg?.alias || field.name
@@ -467,7 +469,7 @@ export class SugarApiClient {
           renameHash: '',
           hierarchyId: '',
           pathIds: [],
-          convert: { type: '', label: '', original: '', dataType: '' },
+          convert: { type: '', label: cfg?.geo || '', original: '', dataType: '' },
           comment,
           statistics: {},
           calculatedConfig: {},

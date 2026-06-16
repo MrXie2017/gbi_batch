@@ -29,6 +29,7 @@ export interface FieldConfig {
   role?: 'dimension' | 'measure'
   hidden?: boolean
   unit?: string
+  geo?: 'geo' | 'lng' | 'lat'
 }
 export type FieldConfigMap = Record<string, FieldConfig>
 

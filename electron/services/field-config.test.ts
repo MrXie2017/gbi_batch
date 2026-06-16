@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import * as xlsx from 'xlsx'
-import { parseRole, parseHidden, buildFieldConfigMap, matchField } from './field-config'
+import { parseRole, parseHidden, parseGeo, buildFieldConfigMap, matchField } from './field-config'
 
 describe('parseRole', () => {
   it('中文「维度」「维」→ dimension', () => {
@@ -38,6 +38,34 @@ describe('parseHidden', () => {
     expect(parseHidden('0')).toBe(false)
     expect(parseHidden('')).toBe(false)
     expect(parseHidden('随便填的')).toBe(false)
+  })
+})
+
+describe('parseGeo', () => {
+  it('地名/区域/地名/区域/geo → geo', () => {
+    expect(parseGeo('地名/区域')).toBe('geo')
+    expect(parseGeo('地名')).toBe('geo')
+    expect(parseGeo('区域')).toBe('geo')
+    expect(parseGeo('geo')).toBe('geo')
+    expect(parseGeo('GEO')).toBe('geo')
+  })
+  it('经度/lng/longitude → lng', () => {
+    expect(parseGeo('经度')).toBe('lng')
+    expect(parseGeo('lng')).toBe('lng')
+    expect(parseGeo('longitude')).toBe('lng')
+  })
+  it('纬度/lat/latitude → lat', () => {
+    expect(parseGeo('纬度')).toBe('lat')
+    expect(parseGeo('lat')).toBe('lat')
+    expect(parseGeo('latitude')).toBe('lat')
+  })
+  it('空/不标记/无/none/未知 → null（不覆盖）', () => {
+    expect(parseGeo('')).toBeNull()
+    expect(parseGeo('  ')).toBeNull()
+    expect(parseGeo('不标记')).toBeNull()
+    expect(parseGeo('无')).toBeNull()
+    expect(parseGeo('none')).toBeNull()
+    expect(parseGeo('随便')).toBeNull()
   })
 })
 
@@ -96,11 +124,26 @@ describe('buildFieldConfigMap', () => {
     expect(cfg!.role).toBeUndefined()
   })
 
-  it('超长行（多于 8 列）多余列被忽略', () => {
-    const map = buildFieldConfigMap([['库A', 't', 'f', '别名', '', '维度', '', '', '多余1', '多余2']])
+  it('超长行（多于 9 列）多余列被忽略', () => {
+    const map = buildFieldConfigMap([['库A', 't', 'f', '别名', '', '维度', '', '', '', '多余1', '多余2']])
     const cfg = matchField(map, '库A', 't', 'f')!
     expect(cfg.alias).toBe('别名')
     expect(cfg.role).toBe('dimension')
+    expect(cfg.geo).toBeUndefined()
+  })
+
+  it('geo 列（第 9 列）解析为 geo/lng/lat；不标记 → 不设', () => {
+    const rows: string[][] = [
+      ['库A', 't', 'region', '', '', '维度', '', '', '地名/区域'],
+      ['库A', 't', 'lng', '', '', '维度', '', '', '经度'],
+      ['库A', 't', 'lat', '', '', '维度', '', '', '纬度'],
+      ['库A', 't', 'plain', '', '', '维度', '', '', '不标记'],
+    ]
+    const map = buildFieldConfigMap(rows)
+    expect(matchField(map, '库A', 't', 'region')!.geo).toBe('geo')
+    expect(matchField(map, '库A', 't', 'lng')!.geo).toBe('lng')
+    expect(matchField(map, '库A', 't', 'lat')!.geo).toBe('lat')
+    expect(matchField(map, '库A', 't', 'plain')!.geo).toBeUndefined()
   })
 
   it('查找参数带空格仍能命中（与 key 构建一致 trim）', () => {
