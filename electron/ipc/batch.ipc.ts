@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SugarApiClient } from '../services/sugar-api'
 import { resolveDbType } from '../services/db-types'
+import type { FieldConfigMap } from '../services/field-config'
 
 interface BatchItem {
   name: string
@@ -24,7 +25,7 @@ interface BatchParams {
   delay: number
   dbTypeName: string
   dbTypeKey: string
-  fieldConfigMap?: Record<string, any>
+  fieldConfigMap?: FieldConfigMap
 }
 
 let stopFlag = false
@@ -185,7 +186,7 @@ async function createModelsForDatasource(
   datasourceName: string,
   itemResult: any,
   mainWindow: BrowserWindow | null,
-  fieldConfigMap: Record<string, any> = {},
+  fieldConfigMap: FieldConfigMap = {},
 ): Promise<void> {
   // 获取表列表
   const tableListResult = await client.getTableList(databaseHash)

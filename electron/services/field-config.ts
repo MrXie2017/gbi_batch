@@ -77,7 +77,11 @@ export function buildFieldConfigMap(rows: string[][]): FieldConfigMap {
     cfg.hidden = hidden // parseHidden 始终返回 boolean，无需守卫
     if (unit) cfg.unit = unit
 
-    map[fieldKey(db, table, field)] = cfg
+    const key = fieldKey(db, table, field)
+    if (map[key]) {
+      console.warn(`[field-config] sheet2 重复字段配置，后者覆盖前者: ${key}`)
+    }
+    map[key] = cfg
   }
   return map
 }
