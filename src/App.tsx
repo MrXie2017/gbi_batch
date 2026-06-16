@@ -46,6 +46,14 @@ function App() {
     }
   }, [isCompleted, currentStep])
 
+  // 退出登录：isLoggedIn 变 false 时回到登录步骤并清空批量数据（reset 已含 fieldConfigMap）
+  useEffect(() => {
+    if (!isLoggedIn) {
+      reset()
+      setCurrentStep('login')
+    }
+  }, [isLoggedIn])
+
   // 手动回退后，下一次渲染恢复自动推进
   useEffect(() => {
     if (suppressAutoAdvance.current) {

@@ -1,8 +1,19 @@
 import React from 'react'
 import { useAuthStore } from '../../stores/auth-store'
+import { useIpc } from '../../hooks/useIpc'
 
 export default function Header() {
   const { isLoggedIn, selectedWorkspace, logout } = useAuthStore()
+  const api = useIpc()
+
+  const handleLogout = async () => {
+    try {
+      await api.auth.logout() // 清主进程 session（cookie）
+    } catch {
+      // 即使主进程清理失败，前端仍退出
+    }
+    logout() // 清前端状态 → 触发 App 回到登录步骤
+  }
 
   return (
     <header className="header">
@@ -18,7 +29,7 @@ export default function Header() {
           </span>
         )}
         {isLoggedIn && (
-          <button className="btn btn-outline" onClick={logout} style={{ fontSize: 12 }}>
+          <button className="btn btn-outline" onClick={handleLogout} style={{ fontSize: 12 }}>
             退出登录
           </button>
         )}
