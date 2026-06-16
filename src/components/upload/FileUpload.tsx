@@ -108,6 +108,7 @@ export default function FileUpload() {
   const {
     filePath, setFilePath, setItems, items,
     selectedDbType, dbTypeKey, setDbType,
+    setFieldConfig, fieldConfigMap,
   } = useBatchStore()
 
   const currentGroup = findGroup(selectedDbType)
@@ -148,6 +149,7 @@ export default function FileUpload() {
       })
 
       setItems(parsedItems, result.columns)
+      setFieldConfig(result.fieldConfig || null)
     } catch (err: any) {
       alert('文件解析失败: ' + err.message)
     }
@@ -216,6 +218,11 @@ export default function FileUpload() {
       {items.length > 0 && (
         <div className="text-muted mt-2" style={{ textAlign: 'center' }}>
           已加载 {items.length} 条 {selectedDbType} 数据源记录
+        </div>
+      )}
+      {fieldConfigMap && Object.keys(fieldConfigMap).length > 0 && (
+        <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
+          📋 已加载 {Object.keys(fieldConfigMap).length} 条字段配置（sheet2）
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DatasourceItem, ItemResult, BatchProgress, BatchResult } from '../types'
+import type { DatasourceItem, ItemResult, BatchProgress, BatchResult, FieldConfigMap } from '../types'
 
 interface BatchState {
   /** 已加载的数据源列表 */
@@ -26,6 +26,8 @@ interface BatchState {
   selectedDbType: string
   /** 数据源类型分组 key (sql | jdbc | http | nosql) */
   dbTypeKey: string
+  /** sheet2 字段配置（可能为空） */
+  fieldConfigMap: FieldConfigMap | null
 
   setItems: (items: DatasourceItem[], columns: string[]) => void
   setFilePath: (path: string | null) => void
@@ -37,6 +39,7 @@ interface BatchState {
   setDelay: (delay: number) => void
   setCompleted: (completed: boolean) => void
   setDbType: (typeName: string, typeKey: string) => void
+  setFieldConfig: (cfg: FieldConfigMap | null) => void
   reset: () => void
 }
 
@@ -53,6 +56,7 @@ const initialState = {
   isCompleted: false,
   selectedDbType: 'MySQL 5.X',
   dbTypeKey: 'sql',
+  fieldConfigMap: null,
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -80,6 +84,8 @@ export const useBatchStore = create<BatchState>((set) => ({
   setCompleted: (completed) => set({ isCompleted: completed }),
 
   setDbType: (typeName, typeKey) => set({ selectedDbType: typeName, dbTypeKey: typeKey }),
+
+  setFieldConfig: (cfg) => set({ fieldConfigMap: cfg }),
 
   reset: () => set({ ...initialState }),
 }))
