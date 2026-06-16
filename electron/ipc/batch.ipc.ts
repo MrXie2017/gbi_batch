@@ -140,7 +140,7 @@ export function registerBatchIpc(
       }
 
       try {
-        await createModelsForDatasource(client, databaseHash, dbType, item.name, itemResult, mainWindow, params.fieldConfigMap)
+        await createModelsForDatasource(client, databaseHash, dbType, item.name, item.database, itemResult, mainWindow, params.fieldConfigMap)
       } catch (err: any) {
         itemResult.modelStatus = 'failed'
         itemResult.modelMsg = `模型创建异常: ${err.message}`
@@ -184,6 +184,7 @@ async function createModelsForDatasource(
   databaseHash: string,
   dbType: number,
   datasourceName: string,
+  databaseName: string,
   itemResult: any,
   mainWindow: BrowserWindow | null,
   fieldConfigMap: FieldConfigMap = {},
@@ -244,7 +245,7 @@ async function createModelsForDatasource(
         dbType,
         schemaResult.data,
         tableName,
-        datasourceName,
+        databaseName,
         fieldConfigMap,
       )
 

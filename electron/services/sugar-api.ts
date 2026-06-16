@@ -415,8 +415,8 @@ export class SugarApiClient {
    * @param dbType       数据库类型编码
    * @param schema       表字段结构（来自 getTableSchema）
    * @param tableName    表名（参与字段配置匹配键）
-   * @param datasourceName 数据源名称（= sheet1 数据源名称；用于字段配置匹配。
-   *                       默认 '' → matchField 保证 miss，保留旧自动归类行为，向后兼容）
+   * @param databaseName 数据库名（= sheet1「数据库名」列 item.database；匹配 sheet2「数据库名」列。
+   *                      默认 '' → matchField 保证 miss，保留旧自动归类行为，向后兼容）
    * @param fieldConfigMap sheet2 字段配置映射；默认 {} → 无覆盖
    */
   static buildModelSavePayload(
@@ -426,7 +426,7 @@ export class SugarApiClient {
     dbType: number,
     schema: TableFieldSchema[],
     tableName: string,
-    datasourceName: string = '', // '' → 保证 matchField miss，保留旧行为（向后兼容）
+    databaseName: string = '', // sheet1「数据库名」列值；'' → 保证 matchField miss，保留旧行为（向后兼容）
     fieldConfigMap: FieldConfigMap = {}, // {} → 无覆盖
   ): DataModelSavePayload {
     const tableId = SugarApiClient.generateSGId(14)
@@ -439,7 +439,7 @@ export class SugarApiClient {
     const meaNodes: string[] = []
 
     for (const field of schema) {
-      const cfg = matchField(fieldConfigMap, datasourceName, tableName, field.name)
+      const cfg = matchField(fieldConfigMap, databaseName, tableName, field.name)
 
       // 归类：显式 role 优先；否则沿用自动规则（string→维度, 其余→度量）
       const isDimension = cfg?.role ? cfg.role === 'dimension' : field.type === 'string'

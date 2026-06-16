@@ -80,4 +80,18 @@ describe('buildModelSavePayload 字段覆盖', () => {
     expect(Object.keys(payload.config.dimensions)).toContain('f1')
     expect((payload.config.dimensions.f1 as any).format).toBeUndefined()
   })
+
+  it('回归：匹配键第一段是 sheet1「数据库名」(databaseName)，不是「数据源名称」(datasourceName)', () => {
+    // 模拟真实场景：数据源名称=多表数据库测试1，数据库名=baidu_ai；sheet2「数据库名」列填 baidu_ai
+    const schema = [field('f1', 'region', 'string')]
+    const map: FieldConfigMap = {
+      [`baidu_ai|test|region`]: { alias: '行政区' },
+    }
+    // 传数据库名 baidu_ai → 命中
+    const hit = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', 'baidu_ai', map)
+    expect(hit.config.dimensions.f1.alias).toBe('行政区')
+    // 误传数据源名称 多表数据库测试1 → 不命中，走默认（alias 回退为字段名）
+    const miss = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', '多表数据库测试1', map)
+    expect(miss.config.dimensions.f1.alias).toBe('region')
+  })
 })
