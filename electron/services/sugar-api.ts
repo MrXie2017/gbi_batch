@@ -1,5 +1,47 @@
 import { resolveDbType } from './db-types'
 
+/** 表结构中的字段信息 */
+interface TableFieldSchema {
+  name: string
+  type: string
+  typeInDB: string
+  comment: string
+  nullable: boolean
+  id: string
+}
+
+/** 数据模型保存配置 */
+interface DataModelSavePayload {
+  hash: string
+  name: string
+  remark: string
+  config: {
+    dbHashes: string[]
+    homologous: any[]
+    predicts: any[]
+    tables: any[]
+    dimensions: Record<string, any>
+    measures: Record<string, any>
+    dimensionMenu: any[]
+    measureMenu: any[]
+    filters: any[]
+    limits: Record<string, any>
+    fuzzy: Record<string, any>
+    synTable: boolean
+    removeDimOrMeaIds: string[]
+    dimensionStatisticsValueKVHash: string
+  }
+  llmconfig: Record<string, any>
+  sugQuestion: any[]
+  sugQuestionLLM: any[]
+  nlpOpen: number
+  nlpState: number
+  canUse: boolean
+  updatedAt: string
+  currentUserCanEdit: boolean
+  dbType: number
+}
+
 interface DatasourcePayload {
   network: string
   region: string
@@ -237,5 +279,264 @@ export class SugarApiClient {
       payload.remark = String(desc).trim()
     }
     return payload
+  }
+
+  // ==================== 数据模型相关 API ====================
+
+  /** 通过数据源名称查找其 hash（添加数据源后 API 不返回 hash，需从列表查） */
+  async getDatabaseHashByName(name: string): Promise<string | null> {
+    try {
+      const resp = await fetch(
+        `${this.baseUrl}/api/group/${this.groupId}/database/simpleList`,
+        { headers: this.headers, signal: AbortSignal.timeout(15_000) },
+      )
+      const result = (await resp.json()) as ApiResult
+      if (result.status === 0 && Array.isArray(result.data)) {
+        const found = result.data.find((db: any) => db.name === name)
+        return found?.hash || null
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /** 获取数据源的表列表 */
+  async getTableList(databaseHash: string): Promise<ApiResult> {
+    try {
+      const resp = await fetch(
+        `${this.baseUrl}/api/group/${this.groupId}/database/${databaseHash}/getTableList`,
+        { headers: this.headers, signal: AbortSignal.timeout(30_000) },
+      )
+      return (await resp.json()) as ApiResult
+    } catch (err: any) {
+      return { status: 500, msg: `获取表列表异常: ${err.message}` }
+    }
+  }
+
+  /** 获取表的字段结构 */
+  async getTableSchema(
+    databaseHash: string,
+    tableName: string,
+    modelHash: string,
+  ): Promise<ApiResult & { data?: TableFieldSchema[] }> {
+    try {
+      const url = `${this.baseUrl}/api/group/${this.groupId}/database/${databaseHash}/getTableSchema?table=${encodeURIComponent(tableName)}&datamodelHash=${modelHash}`
+      const resp = await fetch(url, {
+        headers: this.headers,
+        signal: AbortSignal.timeout(30_000),
+      })
+      return (await resp.json()) as ApiResult & { data?: TableFieldSchema[] }
+    } catch (err: any) {
+      return { status: 500, msg: `获取表结构异常: ${err.message}` }
+    }
+  }
+
+  /** 创建空数据模型 */
+  async createDataModel(databaseHash: string, name: string): Promise<ApiResult> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/manage/group/${this.groupId}/dataModel`, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({ type: 1, databaseHash, name, parentHash: '' }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      return (await resp.json()) as ApiResult
+    } catch (err: any) {
+      return { status: 500, msg: `创建数据模型异常: ${err.message}` }
+    }
+  }
+
+  /** 加编辑锁 */
+  async lockModel(modelHash: string): Promise<ApiResult> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/dataModel/${modelHash}/lock`, {
+        method: 'POST',
+        headers: this.headers,
+        signal: AbortSignal.timeout(15_000),
+      })
+      return (await resp.json()) as ApiResult
+    } catch (err: any) {
+      return { status: 500, msg: `加锁异常: ${err.message}` }
+    }
+  }
+
+  /** 解编辑锁 */
+  async unlockModel(modelHash: string): Promise<ApiResult> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/api/dataModel/${modelHash}/unlock`, {
+        method: 'POST',
+        headers: this.headers,
+        signal: AbortSignal.timeout(15_000),
+      })
+      return (await resp.json()) as ApiResult
+    } catch (err: any) {
+      return { status: 500, msg: `解锁异常: ${err.message}` }
+    }
+  }
+
+  /** 保存数据模型配置 */
+  async saveDataModel(payload: DataModelSavePayload): Promise<ApiResult> {
+    try {
+      const resp = await fetch(
+        `${this.baseUrl}/api/group/${this.groupId}/dataModel/${payload.hash}`,
+        {
+          method: 'PUT',
+          headers: this.headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(30_000),
+        },
+      )
+      return (await resp.json()) as ApiResult
+    } catch (err: any) {
+      return { status: 500, msg: `保存数据模型异常: ${err.message}` }
+    }
+  }
+
+  // ==================== 辅助函数 ====================
+
+  /** 生成 SG 前缀的随机 ID（模拟前端 ID 生成） */
+  static generateSGId(length: number = 16): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    let id = 'SG'
+    for (let i = 0; i < length; i++) {
+      id += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return id
+  }
+
+  /**
+   * 从表字段构建完整的数据模型保存请求体
+   * @param modelHash  模型 hash
+   * @param name       模型名称（通常 = 表名）
+   * @param databaseHash 数据源 hash
+   * @param dbType     数据库类型编码
+   * @param schema     表字段结构（来自 getTableSchema）
+   */
+  static buildModelSavePayload(
+    modelHash: string,
+    modelName: string,
+    databaseHash: string,
+    dbType: number,
+    schema: TableFieldSchema[],
+    tableName: string,
+  ): DataModelSavePayload {
+    const tableId = SugarApiClient.generateSGId(14)
+    const dimMenuId = SugarApiClient.generateSGId(16)
+    const meaMenuId = SugarApiClient.generateSGId(16)
+
+    const dimensions: Record<string, any> = {}
+    const measures: Record<string, any> = {}
+    const dimNodes: string[] = []
+    const meaNodes: string[] = []
+
+    for (const field of schema) {
+      if (field.type === 'string') {
+        // 字符串 → 维度
+        dimensions[field.id] = {
+          type: 'dimension',
+          tableId,
+          field: field.name,
+          calculated: false,
+          predictType: '',
+          noEnumerable: false,
+          expression: '',
+          isAggregated: false,
+          alias: field.name,
+          NLPAlias: [],
+          dataType: field.type,
+          dataTypeInDB: field.typeInDB,
+          isHidden: false,
+          renameHash: '',
+          hierarchyId: '',
+          pathIds: [],
+          convert: { type: '', label: '', original: '', dataType: '' },
+          comment: field.comment || '',
+          statistics: {},
+          calculatedConfig: {},
+          remark: '',
+        }
+        dimNodes.push(field.id)
+      } else {
+        // int / float → 度量
+        measures[field.id] = {
+          type: 'measure',
+          tableId,
+          field: field.name,
+          calculated: false,
+          predictType: '',
+          expression: '',
+          isAggregated: false,
+          alias: field.name,
+          NLPAlias: [],
+          dataType: field.type,
+          dataTypeInDB: field.typeInDB,
+          isHidden: false,
+          defaultAggregator: 'SUM',
+          convert: { type: '' },
+          format: { accuracy: -1, dataFormat: '', unit: '' },
+          comment: field.comment || '',
+          calculatedConfig: {},
+          remark: '',
+        }
+        meaNodes.push(field.id)
+      }
+    }
+
+    return {
+      hash: modelHash,
+      name: modelName,
+      remark: '',
+      config: {
+        dbHashes: [databaseHash],
+        homologous: [],
+        predicts: [],
+        tables: [{
+          tableId,
+          tableName,
+          customTableHash: '',
+          level: 1,
+          dbHash: databaseHash,
+          homoId: '',
+          join: {
+            type: 'inner',
+            ckGlobalJoin: false,
+            leftTableId: '',
+            on: [{ leftField: '', rightField: '' }],
+          },
+        }],
+        dimensions,
+        measures,
+        dimensionMenu: [{
+          type: 'menu',
+          menuId: dimMenuId,
+          predictType: '',
+          name: tableName,
+          nodes: dimNodes,
+        }],
+        measureMenu: [{
+          type: 'menu',
+          menuId: meaMenuId,
+          predictType: '',
+          name: tableName,
+          nodes: meaNodes,
+        }],
+        filters: [],
+        limits: {},
+        fuzzy: {},
+        synTable: false,
+        removeDimOrMeaIds: [],
+        dimensionStatisticsValueKVHash: '',
+      },
+      llmconfig: {},
+      sugQuestion: [],
+      sugQuestionLLM: [],
+      nlpOpen: 0,
+      nlpState: 0,
+      canUse: true,
+      updatedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      currentUserCanEdit: true,
+      dbType,
+    }
   }
 }

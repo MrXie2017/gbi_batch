@@ -71,6 +71,11 @@ export interface ItemResult {
   testMsg: string
   addStatus: 'success' | 'failed' | 'skipped' | 'pending'
   addMsg: string
+  // 数据模型创建状态
+  modelStatus: 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'skipped'
+  modelMsg: string      // "3/5 个模型创建成功" 或 "跳过: 添加数据源失败"
+  modelTotal: number    // 该数据源的表总数
+  modelCreated: number  // 成功创建的模型数
 }
 
 export interface BatchResult {

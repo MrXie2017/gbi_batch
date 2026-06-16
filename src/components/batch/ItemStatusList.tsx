@@ -28,6 +28,15 @@ export default function ItemStatusList() {
               {item.addStatus === 'skipped' && '⏭️ 添加已跳过'}
               {item.addStatus === 'pending' && '⏳ 待执行'}
             </span>
+            {/* 数据模型创建状态 */}
+            <span className={`item-status ${item.modelStatus || 'pending'}`}>
+              {(item.modelStatus === 'pending' || !item.modelStatus) && '⏳ 待创建'}
+              {item.modelStatus === 'running' && `🔄 ${item.modelMsg}`}
+              {item.modelStatus === 'success' && `✅ ${item.modelMsg}`}
+              {item.modelStatus === 'partial' && `⚠️ ${item.modelMsg}`}
+              {item.modelStatus === 'failed' && `❌ ${item.modelMsg}`}
+              {item.modelStatus === 'skipped' && `⏭️ ${item.modelMsg}`}
+            </span>
           </div>
         ))}
       </div>
