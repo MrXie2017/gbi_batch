@@ -1,11 +1,14 @@
 import * as xlsx from 'xlsx'
 import * as path from 'path'
 import type { TemplateField } from './db-types'
+import { buildFieldConfigMap } from './field-config'
+import type { FieldConfigMap } from './field-config'
 
 export interface ParseResult {
   columns: string[]
   rows: Record<string, any>[]
   total: number
+  fieldConfig?: FieldConfigMap
 }
 
 /**
@@ -16,8 +19,20 @@ export function parseExcel(filePath: string): ParseResult {
   const ws = wb.Sheets[wb.SheetNames[0]]
   const jsonData = xlsx.utils.sheet_to_json<Record<string, any>>(ws)
 
+  // 解析 sheet2（字段配置表）；不存在或为空 → 空 map
+  let fieldConfig: FieldConfigMap = {}
+  if (wb.SheetNames.length >= 2) {
+    const ws2 = wb.Sheets[wb.SheetNames[1]]
+    // header:1 → 返回二维数组（含表头行）；defval 让空单元格为空串而非跳过
+    const matrix = xlsx.utils.sheet_to_json<string[]>(ws2, { header: 1, defval: '' })
+    if (matrix.length > 1) {
+      // 跳过首行表头
+      fieldConfig = buildFieldConfigMap(matrix.slice(1).map((r) => r.map((c) => String(c ?? ''))))
+    }
+  }
+
   if (jsonData.length === 0) {
-    return { columns: [], rows: [], total: 0 }
+    return { columns: [], rows: [], total: 0, fieldConfig }
   }
 
   const columns = Object.keys(jsonData[0])
@@ -25,6 +40,7 @@ export function parseExcel(filePath: string): ParseResult {
     columns,
     rows: jsonData,
     total: jsonData.length,
+    fieldConfig,
   }
 }
 

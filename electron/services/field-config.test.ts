@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import * as xlsx from 'xlsx'
 import { parseRole, parseHidden, buildFieldConfigMap, matchField } from './field-config'
 
 describe('parseRole', () => {
@@ -105,5 +106,22 @@ describe('buildFieldConfigMap', () => {
   it('查找参数带空格仍能命中（与 key 构建一致 trim）', () => {
     const map = buildFieldConfigMap([['库A', 't_user', 'name', '姓名', '', '维度', '', '']])
     expect(matchField(map, ' 库A ', ' t_user ', ' name ')).toBeDefined()
+  })
+})
+
+describe('sheet2 矩阵解析（excel-parser 调用形态）', () => {
+  it('xlsx sheet_to_json header:1 的矩阵经 buildFieldConfigMap 正确产出', () => {
+    const wb = xlsx.utils.book_new()
+    const ws = xlsx.utils.aoa_to_sheet([
+      ['数据库名', '表名', '字段名', '别名', '字段备注', '维度或度量', '是否隐藏', '字段单位'],
+      ['库A', 't', 'price', '价格', '', '度量', '否', '元'],
+    ])
+    xlsx.utils.book_append_sheet(wb, ws, '字段配置')
+    const matrix = xlsx.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' })
+    const map = buildFieldConfigMap(matrix.slice(1).map((r) => r.map((c) => String(c ?? ''))))
+    const cfg = matchField(map, '库A', 't', 'price')!
+    expect(cfg.alias).toBe('价格')
+    expect(cfg.role).toBe('measure')
+    expect(cfg.unit).toBe('元')
   })
 })
