@@ -27,10 +27,22 @@ export interface Workspace {
   companyId?: string
 }
 
+/** sheet2 字段配置（与 electron/services/field-config.ts 保持一致） */
+export interface FieldConfig {
+  alias?: string
+  comment?: string
+  role?: 'dimension' | 'measure'
+  hidden?: boolean
+  unit?: string
+}
+export type FieldConfigMap = Record<string, FieldConfig>
+
 export interface ParseResult {
   columns: string[]
   rows: Record<string, any>[]
   total: number
+  /** sheet2 字段配置（无 sheet2 时为空 map） */
+  fieldConfig?: FieldConfigMap
 }
 
 export interface DatasourceItem {
@@ -55,6 +67,8 @@ export interface BatchParams {
   delay: number
   dbTypeName: string   // 选中的数据源类型名称
   dbTypeKey: string    // 分组 key: sql | jdbc | http | nosql
+  /** sheet2 字段配置（可选；未配置时走默认自动归类） */
+  fieldConfigMap?: FieldConfigMap
 }
 
 export interface BatchProgress {

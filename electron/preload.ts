@@ -10,7 +10,7 @@ export interface ElectronAPI {
   }
   file: {
     selectFile: () => Promise<string | null>
-    parseFile: (filePath: string) => Promise<{ columns: string[]; rows: any[]; total: number }>
+    parseFile: (filePath: string) => Promise<{ columns: string[]; rows: any[]; total: number; fieldConfig?: FieldConfigMap }>
     createTemplate: (savePath: string, dbTypeName: string, dbTypeKey: string) => Promise<string>
     exportReport: (data: any[], savePath: string) => Promise<string>
   }
@@ -23,6 +23,15 @@ export interface ElectronAPI {
   }
 }
 
+export interface FieldConfig {
+  alias?: string
+  comment?: string
+  role?: 'dimension' | 'measure'
+  hidden?: boolean
+  unit?: string
+}
+export type FieldConfigMap = Record<string, FieldConfig>
+
 export interface BatchParams {
   baseUrl: string
   cookie: string
@@ -33,6 +42,7 @@ export interface BatchParams {
   delay: number
   dbTypeName: string
   dbTypeKey: string
+  fieldConfigMap?: FieldConfigMap
 }
 
 export interface DatasourceItem {
