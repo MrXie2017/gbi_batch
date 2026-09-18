@@ -29,7 +29,7 @@ export default function BatchControls() {
   const { cookie, csrfToken, baseUrl, selectedWorkspace } = useAuthStore()
   const {
     items, delay, isRunning, isCompleted,
-    selectedDbType, dbTypeKey, fieldConfigMap,
+    selectedDbType, dbTypeKey, fieldConfigMap, modelNameMap, tableConfigMap,
     setDelay, setRunning, setStopped,
     addItemResult, setProgress, setResult,
     itemResults,
@@ -62,6 +62,8 @@ export default function BatchControls() {
         dbTypeName: selectedDbType,
         dbTypeKey,
         fieldConfigMap: fieldConfigMap || undefined,
+        modelNameMap: modelNameMap || undefined,
+        tableConfigMap: tableConfigMap || undefined,
       })
     } catch (err: any) {
       setRunning(false)

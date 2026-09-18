@@ -1,7 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SugarApiClient } from '../services/sugar-api'
 import { resolveDbType } from '../services/db-types'
-import type { FieldConfigMap } from '../services/field-config'
+import type { FieldConfigMap, ModelNameMap, TableConfigMap } from '../services/field-config'
+import { matchModelName, filterTablesByConfig, listConfiguredFields } from '../services/field-config'
 
 interface BatchItem {
   name: string
@@ -26,6 +27,8 @@ interface BatchParams {
   dbTypeName: string
   dbTypeKey: string
   fieldConfigMap?: FieldConfigMap
+  modelNameMap?: ModelNameMap
+  tableConfigMap?: TableConfigMap
 }
 
 let stopFlag = false
@@ -140,7 +143,7 @@ export function registerBatchIpc(
       }
 
       try {
-        await createModelsForDatasource(client, databaseHash, dbType, item.name, item.database, itemResult, mainWindow, params.fieldConfigMap)
+        await createModelsForDatasource(client, databaseHash, dbType, item.name, item.database, itemResult, mainWindow, params.fieldConfigMap, params.modelNameMap, params.tableConfigMap)
       } catch (err: any) {
         itemResult.modelStatus = 'failed'
         itemResult.modelMsg = `模型创建异常: ${err.message}`
@@ -177,7 +180,7 @@ export function registerBatchIpc(
 }
 
 /**
- * 为一个数据源的所有表创建数据模型
+ * 为一个数据源的表创建数据模型（sheet2 配置了表清单时只建配置过的表）
  */
 async function createModelsForDatasource(
   client: SugarApiClient,
@@ -188,20 +191,57 @@ async function createModelsForDatasource(
   itemResult: any,
   mainWindow: BrowserWindow | null,
   fieldConfigMap: FieldConfigMap = {},
+  modelNameMap: ModelNameMap = {},
+  tableConfigMap: TableConfigMap = {},
 ): Promise<void> {
   // 获取表列表
   const tableListResult = await client.getTableList(databaseHash)
-  if (tableListResult.status !== 0 || !tableListResult.data?.length) {
-    itemResult.modelStatus = tableListResult.data?.length === 0 ? 'success' : 'failed'
-    itemResult.modelMsg = tableListResult.data?.length === 0
-      ? '数据源中无表'
-      : `获取表列表失败: ${tableListResult.msg}`
+  if (tableListResult.status !== 0) {
+    itemResult.modelStatus = 'failed'
+    itemResult.modelMsg = `获取表列表失败: ${tableListResult.msg}`
     itemResult.modelTotal = 0
     itemResult.modelCreated = 0
     return
   }
 
-  const tables: { value: string; label: string }[] = tableListResult.data
+  let tables: { value: string; label: string }[] = tableListResult.data || []
+
+  // 按 sheet2 配置过滤：只建配置清单里的表（value 做空值防护，防服务端脏数据炸掉整库）
+  const allTableNames = tables.map((t) => String(t.value ?? ''))
+  const filterResult = filterTablesByConfig(allTableNames, tableConfigMap, databaseName)
+  let filterMsg = ''
+  if (filterResult?.note === 'db-miss') {
+    // sheet2 有配置但没配当前库名（多为库名笔误）：不过滤，但显式提示而非静默全量建模
+    console.warn(
+      `[model] sheet2 已配置 ${Object.keys(tableConfigMap).length} 个库，但未配置库名「${databaseName}」，未按 sheet2 过滤（全量建模）`,
+    )
+    filterMsg = '（sheet2 未配置该库名，未过滤）'
+  } else if (filterResult) {
+    if (filterResult.missing.length) {
+      console.warn(
+        `[model] sheet2 配置的表在数据源中不存在: ${filterResult.missing.slice(0, 10).join(', ')}` +
+        `${filterResult.missing.length > 10 ? ` 等 ${filterResult.missing.length} 张` : ''}`,
+      )
+    }
+    const keptSet = new Set(filterResult.kept)
+    const matched = tables.filter((t) => keptSet.has(String(t.value ?? '')))
+    filterMsg = filterResult.missing.length
+      ? `（按 sheet2 过滤 ${matched.length}/${tables.length}，库中缺: ${filterResult.missing.slice(0, 5).join(', ')}${filterResult.missing.length > 5 ? '…' : ''}）`
+      : `（按 sheet2 过滤 ${matched.length}/${tables.length}）`
+    tables = matched
+  }
+  const unmatchedFieldNotes: string[] = []
+
+  if (tables.length === 0) {
+    itemResult.modelStatus = 'success'
+    itemResult.modelMsg = filter
+      ? `sheet2 配置的表均不在该数据源中，未创建模型${filterMsg}`
+      : '数据源中无表'
+    itemResult.modelTotal = 0
+    itemResult.modelCreated = 0
+    return
+  }
+
   itemResult.modelTotal = tables.length
   itemResult.modelStatus = 'running'
   itemResult.modelMsg = `正在创建模型 (0/${tables.length})`
@@ -214,8 +254,9 @@ async function createModelsForDatasource(
 
     const table = tables[t]
     const tableName = table.value
-    // 用 "数据源名称_表名" 作为模型名，避免不同数据源的表名重复
-    const modelName = `${datasourceName}_${tableName}`
+    // 模型名 = 数据源名 + (sheet2「中文名(问数模型名称)」 || 表名)
+    // 中文名取自 sheet2 第 3 列（按「数据库名|表名」匹配）；未配置则用表名
+    const modelName = `${datasourceName}_${matchModelName(modelNameMap, databaseName, tableName) || tableName}`
 
     // 3.1 创建空模型
     const createResult = await client.createDataModel(databaseHash, modelName)
@@ -235,6 +276,17 @@ async function createModelsForDatasource(
       if (schemaResult.status !== 0 || !schemaResult.data?.length) {
         console.log(`[model] 获取表结构失败 "${tableName}": ${schemaResult.msg}`)
         continue
+      }
+
+      // 诊断：sheet2 配置了但表中不存在的字段（多为拼写/大小写笔误），告警并记入结果消息
+      const schemaFields = new Set(schemaResult.data.map((f) => (f.name || '').trim().toLowerCase()))
+      const unmatchedFields = listConfiguredFields(fieldConfigMap, databaseName, tableName)
+        .filter((f) => !schemaFields.has(f))
+      if (unmatchedFields.length) {
+        console.warn(`[model] sheet2 配置的字段在表 "${tableName}" 中不存在: ${unmatchedFields.join(', ')}`)
+        unmatchedFieldNotes.push(
+          `${tableName}(${unmatchedFields.slice(0, 3).join(',')}${unmatchedFields.length > 3 ? `等${unmatchedFields.length}个` : ''})`,
+        )
       }
 
       // 3.4 构建模型配置并保存
@@ -266,16 +318,20 @@ async function createModelsForDatasource(
     mainWindow?.webContents.send('batch:itemResult', itemResult)
   }
 
-  // 最终状态
+  // 最终状态（sheet2 相关提示统一拼在消息尾部，让打包后无终端的用户也能看到）
+  const fieldMissMsg = unmatchedFieldNotes.length
+    ? `；sheet2 字段未命中: ${unmatchedFieldNotes.slice(0, 5).join('、')}${unmatchedFieldNotes.length > 5 ? '…' : ''}`
+    : ''
+  const noteMsg = `${filterMsg}${fieldMissMsg}`
   if (modelCreated === tables.length) {
     itemResult.modelStatus = 'success'
-    itemResult.modelMsg = `已创建 ${modelCreated} 个模型`
+    itemResult.modelMsg = `已创建 ${modelCreated} 个模型${noteMsg}`
   } else if (modelCreated > 0) {
     itemResult.modelStatus = 'partial'
-    itemResult.modelMsg = `${modelCreated}/${tables.length} 个模型创建成功`
+    itemResult.modelMsg = `${modelCreated}/${tables.length} 个模型创建成功${noteMsg}`
   } else {
     itemResult.modelStatus = 'failed'
-    itemResult.modelMsg = `模型创建失败 (0/${tables.length})`
+    itemResult.modelMsg = `模型创建失败 (0/${tables.length})${noteMsg}`
   }
   itemResult.modelCreated = modelCreated
 }

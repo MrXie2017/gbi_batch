@@ -1,6 +1,6 @@
 {
   "name": "sugar-bi-batch-datasource",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Sugar BI 批量添加数据源桌面工具",
   "main": "dist/electron/main.js",
   "author": "GBI Team",
@@ -11,8 +11,8 @@
     "electron:build": "vite build && tsc -p tsconfig.node.json",
     "dist": "npm run electron:build && electron-builder",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run"
+    "test": "vitest --no-file-parallelism",
+    "test:run": "vitest run --no-file-parallelism"
   },
   "build": {
     "appId": "com.sugarbi.batch-datasource",

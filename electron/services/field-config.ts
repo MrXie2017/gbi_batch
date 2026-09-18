@@ -11,9 +11,21 @@ export interface FieldConfig {
 /** 匹配键 → 字段配置 */
 export type FieldConfigMap = Record<string, FieldConfig>
 
-/** 「数据库名|表名|字段名」匹配键 */
+/** sheet2 已配置的建模表清单：数据库名 → [表名]（用于「只建配置过的表」） */
+export type TableConfigMap = Record<string, string[]>
+
+/**
+ * 归一化匹配段：trim + 小写。
+ * 库名/表名/字段名在 sheet2 手填与数据库实际返回之间常有大小写漂移（如 Oracle 大写表名），
+ * 构建与查找两侧统一走本函数，保证一致命中。
+ */
+function norm(value: string | undefined | null): string {
+  return (value || '').trim().toLowerCase()
+}
+
+/** 「数据库名|表名|字段名」匹配键（各段已归一化） */
 export function fieldKey(databaseName: string, tableName: string, fieldName: string): string {
-  return `${databaseName}|${tableName}|${fieldName}`
+  return `${norm(databaseName)}|${norm(tableName)}|${norm(fieldName)}`
 }
 
 /**
@@ -50,42 +62,153 @@ export function parseGeo(raw: string): 'geo' | 'lng' | 'lat' | null {
   return null // 含「不标记」「无」「none」及未知值
 }
 
-/** 列索引常量（sheet2 固定列顺序，0-based） */
-const COL = {
-  DB: 0, TABLE: 1, FIELD: 2, ALIAS: 3, COMMENT: 4,
-  ROLE: 5, HIDDEN: 6, UNIT: 7, GEO: 8,
-} as const
+// ==================== sheet2 列定位 ====================
 
-/** 判断一行字段配置是否「全空」（无可覆盖项），用于跳过无意义行 */
-function isEmptyConfig(cells: string[]): boolean {
-  const text = [COL.ALIAS, COL.COMMENT, COL.ROLE, COL.HIDDEN, COL.UNIT, COL.GEO]
-    .map((i) => (cells[i] || '').trim())
+/** sheet2 逻辑列 → 实际列索引；-1 表示该列未在表头中出现（禁用，读取恒为空） */
+export interface Sheet2Columns {
+  db: number
+  table: number
+  modelName: number
+  field: number
+  alias: number
+  comment: number
+  role: number
+  hidden: number
+  unit: number
+  geo: number
+}
+
+/** 模板固定列序（表头整体无法识别时的回退） */
+export const DEFAULT_SHEET2_COLUMNS: Sheet2Columns = {
+  db: 0, table: 1, modelName: 2, field: 3, alias: 4, comment: 5,
+  role: 6, hidden: 7, unit: 8, geo: 9,
+}
+
+/** 单个表头单元格归类；无法识别返回 null（判断顺序敏感：更具体的词先判） */
+function classifyHeader(text: string): keyof Sheet2Columns | null {
+  const v = (text || '').trim()
+  if (!v) return null
+  if (v.includes('库名') || v.includes('数据库')) return 'db' // 数据库名/库名
+  if (v.includes('模型') || v.includes('中文名')) return 'modelName' // 中文名(问数模型名称)/模型名称
+  if (v.includes('表名') || v === '表') return 'table' // 表名/表名称/数据表名
+  if (v.includes('字段名') || v === '字段' || v === '列名') return 'field'
+  if (v.includes('别名')) return 'alias'
+  if (v.includes('备注') || v.includes('注释') || v.includes('描述')) return 'comment'
+  if (v.includes('维度') || v.includes('度量') || v.includes('角色')) return 'role'
+  if (v.includes('隐藏')) return 'hidden'
+  if (v.includes('单位')) return 'unit'
+  if (v.includes('地理') || v.includes('标记')) return 'geo'
+  return null
+}
+
+/**
+ * 判断某行是否为「可识别的表头行」（库名/表名/字段名三个关键列都识别成功）。
+ */
+function isHeaderRow(cells: string[]): boolean {
+  const kinds = new Set((cells || []).map((c) => classifyHeader(String(c ?? ''))))
+  return kinds.has('db') && kinds.has('table') && kinds.has('field')
+}
+
+/**
+ * 按表头行识别各逻辑列的实际索引（兼容用户增删/调序列，如插入「序号」列）。
+ * - 库名/表名/字段名是匹配关键：任一识别失败 → 整体回退模板固定列序（兼容无表头/表头被改坏的文件）
+ * - 其余可选列未识别 → 置 -1 禁用，绝不回退默认索引：
+ *   否则旧 9 列等形态下 modelName 会默认指向第 2 列（字段名），模型名静默变成字段名
+ */
+export function resolveSheet2Columns(headerRow: string[]): Sheet2Columns {
+  const recognized = new Map<keyof Sheet2Columns, number>()
+  headerRow.forEach((cell, idx) => {
+    const kind = classifyHeader(String(cell ?? ''))
+    if (kind && !recognized.has(kind)) {
+      recognized.set(kind, idx)
+    }
+  })
+  if (!recognized.has('db') || !recognized.has('table') || !recognized.has('field')) {
+    return { ...DEFAULT_SHEET2_COLUMNS }
+  }
+  const cols = {} as Sheet2Columns
+  for (const key of Object.keys(DEFAULT_SHEET2_COLUMNS) as (keyof Sheet2Columns)[]) {
+    cols[key] = recognized.has(key) ? recognized.get(key)! : -1
+  }
+  return cols
+}
+
+/**
+ * 库名/表名/中文名三列向下填充：
+ * 兼容合并单元格与「按组填写一次」的写法（xlsx 读取时合并单元格只有左上格有值）。
+ * 组的边界以「表名列非空」判定：表名非空 = 新组首行（中文名以本行为准，留空 = 该表不命名，
+ * 同时重置继承，避免上一组的中文名泄漏）；表名为空 = 组内延续行（继承库名/表名/中文名）。
+ */
+export function fillDownSheet2Rows(
+  rows: string[][],
+  columns: Sheet2Columns = DEFAULT_SHEET2_COLUMNS,
+): string[][] {
+  let lastDb = ''
+  let lastTable = ''
+  let lastModelName = ''
+  return rows.map((cells) => {
+    const row = [...cells]
+    const isGroupFirst = !!(row[columns.table] || '').trim()
+
+    // 库名：空则继承上一行（db 列合并单元格）
+    if (columns.db >= 0) {
+      const db = (row[columns.db] || '').trim()
+      if (db) lastDb = db
+      else row[columns.db] = lastDb
+    }
+
+    // 中文名：组首行以本行为准并重置继承；组内延续行空则继承
+    if (columns.modelName >= 0) {
+      const name = (row[columns.modelName] || '').trim()
+      if (isGroupFirst) lastModelName = name
+      else if (!name) row[columns.modelName] = lastModelName
+    }
+
+    // 表名：空则继承上一行（表名列合并单元格）
+    if (isGroupFirst) {
+      lastTable = (row[columns.table] || '').trim()
+    } else {
+      row[columns.table] = lastTable
+    }
+    return row
+  })
+}
+
+// ==================== 字段级配置 ====================
+
+/** 判断一行字段配置是否「全空」（无可覆盖项），用于跳过无意义行；禁用列（-1）视为空 */
+function isEmptyConfig(cells: string[], columns: Sheet2Columns): boolean {
+  const text = [columns.alias, columns.comment, columns.role, columns.hidden, columns.unit, columns.geo]
+    .map((i) => (i >= 0 ? (cells[i] || '').trim() : ''))
     .join('')
   return text.length === 0
 }
 
 /**
- * 将 sheet2 的原始行（string[][]，不含表头）构建为 FieldConfigMap。
- * - 库名/表名/字段名 任一为空 → 跳过该行
+ * 将 sheet2 的数据行构建为 FieldConfigMap。
+ * - 库名/表名/字段名 任一为空（或列被禁用）→ 跳过该行
  * - 全部可配置项为空 → 跳过（无可覆盖项）
  * - 重复 key → 后者覆盖前者
  */
-export function buildFieldConfigMap(rows: string[][]): FieldConfigMap {
+export function buildFieldConfigMap(
+  rows: string[][],
+  columns: Sheet2Columns = DEFAULT_SHEET2_COLUMNS,
+): FieldConfigMap {
   const map: FieldConfigMap = {}
   for (const cells of rows) {
-    const db = (cells[COL.DB] || '').trim()
-    const table = (cells[COL.TABLE] || '').trim()
-    const field = (cells[COL.FIELD] || '').trim()
+    const db = (cells[columns.db] || '').trim()
+    const table = (cells[columns.table] || '').trim()
+    const field = (cells[columns.field] || '').trim()
     if (!db || !table || !field) continue
-    if (isEmptyConfig(cells)) continue
+    if (isEmptyConfig(cells, columns)) continue
 
     const cfg: FieldConfig = {}
-    const alias = (cells[COL.ALIAS] || '').trim()
-    const comment = (cells[COL.COMMENT] || '').trim()
-    const role = parseRole(cells[COL.ROLE] || '')
-    const hidden = parseHidden(cells[COL.HIDDEN] || '')
-    const unit = (cells[COL.UNIT] || '').trim()
-    const geo = parseGeo(cells[COL.GEO] || '')
+    const alias = columns.alias >= 0 ? (cells[columns.alias] || '').trim() : ''
+    const comment = columns.comment >= 0 ? (cells[columns.comment] || '').trim() : ''
+    const role = parseRole(columns.role >= 0 ? cells[columns.role] || '' : '')
+    const hidden = parseHidden(columns.hidden >= 0 ? cells[columns.hidden] || '' : '')
+    const unit = columns.unit >= 0 ? (cells[columns.unit] || '').trim() : ''
+    const geo = parseGeo(columns.geo >= 0 ? cells[columns.geo] || '' : '')
 
     if (alias) cfg.alias = alias
     if (comment) cfg.comment = comment
@@ -103,6 +226,12 @@ export function buildFieldConfigMap(rows: string[][]): FieldConfigMap {
   return map
 }
 
+/** 按 key 后缀唯一命中查找（缺少库名时的兜底；多个候选 → 放弃，避免误配） */
+function lookupUniqueBySuffix<T>(map: Record<string, T>, suffix: string): T | undefined {
+  const hits = Object.keys(map).filter((k) => k.endsWith(suffix))
+  return hits.length === 1 ? map[hits[0]] : undefined
+}
+
 /** 按「数据库名|表名|字段名」查找配置；未命中返回 undefined */
 export function matchField(
   map: FieldConfigMap,
@@ -110,10 +239,166 @@ export function matchField(
   tableName: string,
   fieldName: string,
 ): FieldConfig | undefined {
-  // 与 buildFieldConfigMap 构建 key 时一致地 trim，避免查找参数带空格时静默 miss
-  return map[fieldKey(
-    (databaseName || '').trim(),
-    (tableName || '').trim(),
-    (fieldName || '').trim(),
-  )]
+  const exact = map[fieldKey(databaseName, tableName, fieldName)]
+  if (exact) return exact
+  // JDBC 等类型 sheet1 无「数据库名」列：库名为空时按「表名|字段名」全局唯一命中兜底
+  if (!(databaseName || '').trim()) {
+    return lookupUniqueBySuffix(map, `|${norm(tableName)}|${norm(fieldName)}`)
+  }
+  return undefined
+}
+
+/** 列出 sheet2 为某表配置过的字段名（已归一化；用于诊断「配置了但库里不存在」的拼写错误） */
+export function listConfiguredFields(
+  map: FieldConfigMap,
+  databaseName: string,
+  tableName: string,
+): string[] {
+  const keys = Object.keys(map)
+  const direct = keys.filter((k) => k.startsWith(`${norm(databaseName)}|${norm(tableName)}|`))
+  if (direct.length || (databaseName || '').trim()) {
+    return direct.map((k) => k.split('|').pop() || '')
+  }
+  // 库名为空（JDBC 等类型）：与 matchField 的后缀兜底同口径，按「|表名|」中段收集
+  const mid = `|${norm(tableName)}|`
+  return keys.filter((k) => k.includes(mid)).map((k) => k.split(mid)[1] || '')
+}
+
+// ==================== 表级「问数模型名称」映射 ====================
+
+/** 表级模型名映射：「数据库名|表名」→ 中文名（问数模型名称，取自第 3 列） */
+export type ModelNameMap = Record<string, string>
+
+/** 「数据库名|表名」匹配键（表级，各段已归一化） */
+export function modelKey(databaseName: string, tableName: string): string {
+  return `${norm(databaseName)}|${norm(tableName)}`
+}
+
+/**
+ * 将 sheet2 的数据行构建为表级模型名映射（取「中文名(问数模型名称)」列）。
+ * - 库名/表名任一为空，或中文名列被禁用（-1，如旧 9 列模板）→ 跳过该行
+ * - 中文名为空 → 跳过（查找时由调用方回退到默认模型名）
+ * - 同一表多行 → 第一个非空中文名胜出
+ */
+export function buildModelNameMap(
+  rows: string[][],
+  columns: Sheet2Columns = DEFAULT_SHEET2_COLUMNS,
+): ModelNameMap {
+  const map: ModelNameMap = {}
+  if (columns.modelName < 0) return map // 列未配置（旧模板无中文名列）→ 全部回退默认模型名
+  for (const cells of rows) {
+    const db = (cells[columns.db] || '').trim()
+    const table = (cells[columns.table] || '').trim()
+    if (!db || !table) continue
+    const name = (cells[columns.modelName] || '').trim()
+    if (!name) continue
+    const key = modelKey(db, table)
+    if (!(key in map)) map[key] = name // 第一个非空胜出
+  }
+  return map
+}
+
+/** 按「数据库名|表名」查找模型名；未命中返回 undefined（调用方回退默认名） */
+export function matchModelName(
+  map: ModelNameMap,
+  databaseName: string,
+  tableName: string,
+): string | undefined {
+  const exact = map[modelKey(databaseName, tableName)]
+  if (exact) return exact
+  // 库名为空（JDBC 等类型）时按「|表名」全局唯一命中兜底
+  if (!(databaseName || '').trim()) {
+    return lookupUniqueBySuffix(map, `|${norm(tableName)}`)
+  }
+  return undefined
+}
+
+// ==================== 表级建模清单（只建 sheet2 配置过的表） ====================
+
+/**
+ * 将 sheet2 的数据行构建为「数据库名 → [表名]」清单（键已归一化为小写）。
+ * 只要某表在 sheet2 出现过（无论是否配了中文名/字段），就算「配置过」。
+ */
+export function buildTableConfigMap(
+  rows: string[][],
+  columns: Sheet2Columns = DEFAULT_SHEET2_COLUMNS,
+): TableConfigMap {
+  const map: TableConfigMap = {}
+  for (const cells of rows) {
+    const db = norm(cells[columns.db])
+    const table = (cells[columns.table] || '').trim()
+    if (!db || !table) continue
+    const list = map[db] || (map[db] = [])
+    if (!list.some((t) => norm(t) === norm(table))) list.push(table)
+  }
+  return map
+}
+
+/** filterTablesByConfig 的结果；note='db-miss' 表示 sheet2 有配置但未配置该库名 */
+export interface TableFilterResult {
+  /** 清单内且数据源中存在的表（保持输入顺序） */
+  kept: string[]
+  /** 清单内但数据源中不存在的表（原始写法，去重） */
+  missing: string[]
+  /** 'db-miss'：sheet2 有配置但未配置该库名（调用方应显式提示，而非静默全量） */
+  note: '' | 'db-miss'
+}
+
+/**
+ * 按 sheet2 表清单过滤数据源中的表名。
+ * - 返回 null：sheet2 无任何表配置 → 不过滤（全量，兼容无 sheet2 的旧文件）
+ * - note='db-miss'：sheet2 有配置但未配置该库名（多为库名笔误）→ 不过滤，由调用方提示
+ * - 库名为空（JDBC 等类型）时，以全部配置表的并集兜底
+ */
+export function filterTablesByConfig(
+  tableNames: string[],
+  tableConfigMap: TableConfigMap | undefined | null,
+  databaseName: string,
+): TableFilterResult | null {
+  if (!tableConfigMap || Object.keys(tableConfigMap).length === 0) return null
+  const db = norm(databaseName)
+  let rawNames = tableConfigMap[db]
+  if (!rawNames && !db) {
+    rawNames = Object.values(tableConfigMap).flat()
+  }
+  if (!rawNames) return { kept: [...tableNames], missing: [], note: 'db-miss' }
+  const existing = new Set(tableNames.map((t) => norm(t)))
+  const wanted = new Set(rawNames.map((t) => norm(t)))
+  return {
+    kept: tableNames.filter((t) => wanted.has(norm(t))),
+    missing: [...new Set(rawNames.filter((t) => !existing.has(norm(t))))],
+    note: '',
+  }
+}
+
+// ==================== sheet2 总入口 ====================
+
+/** buildSheet2Config 的产出：字段配置 + 模型名映射 + 建模表清单 */
+export interface Sheet2Config {
+  fieldConfig: FieldConfigMap
+  modelNameMap: ModelNameMap
+  tableConfigMap: TableConfigMap
+}
+
+/**
+ * 解析 sheet2 原始矩阵（含表头行，string[][]）：
+ * 向下扫描定位表头（容错顶部标题/说明行）→ 识别列索引 → 库名/表名/中文名向下填充 → 构建三个映射。
+ * 找不到可识别表头时按首行 + 模板默认列序解析（与旧版行为一致）。
+ */
+export function buildSheet2Config(matrix: string[][]): Sheet2Config {
+  let headerIdx = 0
+  const scanLimit = Math.min(matrix.length, 5)
+  for (let i = 0; i < scanLimit; i++) {
+    if (isHeaderRow(matrix[i] || [])) {
+      headerIdx = i
+      break
+    }
+  }
+  const columns = resolveSheet2Columns((matrix[headerIdx] || []).map((c) => String(c ?? '')))
+  const filled = fillDownSheet2Rows(matrix.slice(headerIdx + 1), columns)
+  return {
+    fieldConfig: buildFieldConfigMap(filled, columns),
+    modelNameMap: buildModelNameMap(filled, columns),
+    tableConfigMap: buildTableConfigMap(filled, columns),
+  }
 }

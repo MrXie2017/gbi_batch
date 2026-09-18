@@ -109,6 +109,7 @@ export default function FileUpload() {
     filePath, setFilePath, setItems, items,
     selectedDbType, dbTypeKey, setDbType,
     setFieldConfig, fieldConfigMap,
+    setModelNameMap, setTableConfigMap, tableConfigMap,
   } = useBatchStore()
 
   const currentGroup = findGroup(selectedDbType)
@@ -150,6 +151,8 @@ export default function FileUpload() {
 
       setItems(parsedItems, result.columns)
       setFieldConfig(result.fieldConfig || null)
+      setModelNameMap(result.modelNameMap || null)
+      setTableConfigMap(result.tableConfigMap || null)
     } catch (err: any) {
       alert('文件解析失败: ' + err.message)
     }
@@ -223,6 +226,11 @@ export default function FileUpload() {
       {fieldConfigMap && Object.keys(fieldConfigMap).length > 0 && (
         <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
           📋 已加载 {Object.keys(fieldConfigMap).length} 条字段配置（sheet2）
+        </div>
+      )}
+      {tableConfigMap && Object.keys(tableConfigMap).length > 0 && (
+        <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
+          🗂️ 已加载 sheet2 表配置：{Object.keys(tableConfigMap).length} 库 / {Object.values(tableConfigMap).reduce((n, ts) => n + ts.length, 0)} 表（各数据源按其库名取对应清单过滤）
         </div>
       )}
     </div>

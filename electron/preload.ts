@@ -10,7 +10,7 @@ export interface ElectronAPI {
   }
   file: {
     selectFile: () => Promise<string | null>
-    parseFile: (filePath: string) => Promise<{ columns: string[]; rows: any[]; total: number; fieldConfig?: FieldConfigMap }>
+    parseFile: (filePath: string) => Promise<{ columns: string[]; rows: any[]; total: number; fieldConfig?: FieldConfigMap; modelNameMap?: ModelNameMap; tableConfigMap?: TableConfigMap }>
     createTemplate: (savePath: string, dbTypeName: string, dbTypeKey: string) => Promise<string>
     exportReport: (data: any[], savePath: string) => Promise<string>
   }
@@ -32,6 +32,8 @@ export interface FieldConfig {
   geo?: 'geo' | 'lng' | 'lat'
 }
 export type FieldConfigMap = Record<string, FieldConfig>
+export type ModelNameMap = Record<string, string>
+export type TableConfigMap = Record<string, string[]>
 
 export interface BatchParams {
   baseUrl: string
@@ -44,6 +46,8 @@ export interface BatchParams {
   dbTypeName: string
   dbTypeKey: string
   fieldConfigMap?: FieldConfigMap
+  modelNameMap?: ModelNameMap
+  tableConfigMap?: TableConfigMap
 }
 
 export interface DatasourceItem {
