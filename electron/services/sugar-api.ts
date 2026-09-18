@@ -56,6 +56,7 @@ interface DatasourcePayload {
   username: string
   password: string
   remark?: string
+  config?: Record<string, any>
 }
 
 interface ApiResult {
@@ -280,6 +281,13 @@ export class SugarApiClient {
     if (desc && String(desc).trim()) {
       payload.remark = String(desc).trim()
     }
+
+    // PostgreSQL 默认开启「JDBC方式连接」，走 JDBC 驱动；
+    // 原生 pg 驱动在私有部署等环境下进入工作空间后查询会失败
+    if (dbType === 2) {
+      payload.config = { usePostgresDriver: true }
+    }
+
     return payload
   }
 

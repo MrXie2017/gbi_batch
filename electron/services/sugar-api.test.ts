@@ -118,3 +118,25 @@ describe('buildModelSavePayload 字段覆盖', () => {
     expect(payload.config.dimensions.f3).toBeUndefined()
   })
 })
+
+describe('buildPayload（PostgreSQL 默认开启 JDBC 方式连接）', () => {
+  it('PostgreSQL(type=2) → 携带 config.usePostgresDriver=true', () => {
+    const payload = SugarApiClient.buildPayload(
+      { '数据源名称': 'pg-test', '数据库地址': 'h', '端口': '5432', '数据库名': 'd', '用户名': 'u', '密码': 'p' },
+      'sql',
+      'PostgreSQL',
+    )
+    expect(payload.type).toBe(2)
+    expect(payload.config).toEqual({ usePostgresDriver: true })
+  })
+
+  it('MySQL(type=0) → 不携带 config', () => {
+    const payload = SugarApiClient.buildPayload(
+      { '数据源名称': 'my', '数据库地址': 'h', '端口': '3306', '数据库名': 'd', '用户名': 'u', '密码': 'p' },
+      'sql',
+      'MySQL 5.X',
+    )
+    expect(payload.type).toBe(0)
+    expect(payload.config).toBeUndefined()
+  })
+})
