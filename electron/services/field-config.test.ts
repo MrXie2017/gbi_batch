@@ -213,6 +213,23 @@ describe('buildModelNameMap / matchModelName（表级模型名：第 3 列「中
     expect(matchModelName(buildModelNameMap(rows), ' dbA ', ' t ')).toBe('中文名')
   })
 
+  it('库名失配但表名全局唯一 → 按「|表名」兜底命中', () => {
+    const rows: string[][] = [
+      ['ODS_DB', 't_user', '用户表', 'name', '', '', '', '', '', ''],
+      ['ODS_DB', 't_order', '订单表', 'id', '', '', '', '', '', ''],
+    ]
+    // sheet1 填的库名 ods 与 sheet2 的 ODS_DB 不同：精确键失配，兜底救回中文名
+    expect(matchModelName(buildModelNameMap(rows), 'ods', 't_user')).toBe('用户表')
+  })
+
+  it('库名失配且表名跨库重复 → 放弃兜底（避免误配）', () => {
+    const rows: string[][] = [
+      ['dbA', 't_user', '甲库用户表', 'name', '', '', '', '', '', ''],
+      ['dbB', 't_user', '乙库用户表', 'id', '', '', '', '', '', ''],
+    ]
+    expect(matchModelName(buildModelNameMap(rows), 'dbC', 't_user')).toBeUndefined()
+  })
+
   it('空行数组 → 空 map', () => {
     expect(Object.keys(buildModelNameMap([]))).toHaveLength(0)
   })

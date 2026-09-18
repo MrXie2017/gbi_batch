@@ -133,6 +133,22 @@ export function registerAuthIpc(
         } catch { /* ignore */ }
       }
 
+      // 页面加载失败（服务器不可达/地址错误等）：窗口内显示中文错误页，避免静默白屏
+      loginWindow.webContents.on(
+        'did-fail-load',
+        (_e, errorCode, errorDesc, failedUrl, isMainFrame) => {
+          if (!isMainFrame || errorCode === -3) return // -3 = ABORTED（重定向中断等，非真错误）
+          const detail = `${errorDesc || '未知错误'} (${errorCode})<br>${failedUrl}`
+          const html =
+            '<meta charset="utf-8"><body style="font-family:system-ui;padding:40px;color:#333">' +
+            '<h2>无法打开登录页</h2><p>服务器地址无法访问，请检查后重试：</p>' +
+            `<p style="color:#c00">${detail}</p></body>`
+          loginWindow?.webContents
+            .loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+            .catch(() => { /* 展示失败时维持现状，用户关闭窗口即可 */ })
+        },
+      )
+
       loginWindow.loadURL(baseUrl)
 
       // 备用轮询：每 2 秒检查一次（处理 SPA 内导航等场景）

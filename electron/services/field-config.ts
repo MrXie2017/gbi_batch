@@ -298,7 +298,11 @@ export function buildModelNameMap(
   return map
 }
 
-/** 按「数据库名|表名」查找模型名；未命中返回 undefined（调用方回退默认名） */
+/**
+ * 按「数据库名|表名」查找模型名；未命中返回 undefined（调用方回退默认名）。
+ * 精确键未命中时（库名为空的 JDBC 类型，或 sheet1/sheet2 库名写法不一致），
+ * 按「|表名」全局唯一命中兜底（与 matchField 同口径）；多个候选 → 放弃，避免误配。
+ */
 export function matchModelName(
   map: ModelNameMap,
   databaseName: string,
@@ -306,11 +310,7 @@ export function matchModelName(
 ): string | undefined {
   const exact = map[modelKey(databaseName, tableName)]
   if (exact) return exact
-  // 库名为空（JDBC 等类型）时按「|表名」全局唯一命中兜底
-  if (!(databaseName || '').trim()) {
-    return lookupUniqueBySuffix(map, `|${norm(tableName)}`)
-  }
-  return undefined
+  return lookupUniqueBySuffix(map, `|${norm(tableName)}`)
 }
 
 // ==================== 表级建模清单（只建 sheet2 配置过的表） ====================
@@ -340,14 +340,14 @@ export interface TableFilterResult {
   kept: string[]
   /** 清单内但数据源中不存在的表（原始写法，去重） */
   missing: string[]
-  /** 'db-miss'：sheet2 有配置但未配置该库名（调用方应显式提示，而非静默全量） */
+  /** 'db-miss'：sheet2 有配置但未配置该库名（多为笔误；调用方应跳过建模并显式提示，而非静默全量） */
   note: '' | 'db-miss'
 }
 
 /**
  * 按 sheet2 表清单过滤数据源中的表名。
  * - 返回 null：sheet2 无任何表配置 → 不过滤（全量，兼容无 sheet2 的旧文件）
- * - note='db-miss'：sheet2 有配置但未配置该库名（多为库名笔误）→ 不过滤，由调用方提示
+ * - note='db-miss'：sheet2 有配置但未配置该库名（多为库名笔误）→ 由调用方跳过建模并提示
  * - 库名为空（JDBC 等类型）时，以全部配置表的并集兜底
  */
 export function filterTablesByConfig(

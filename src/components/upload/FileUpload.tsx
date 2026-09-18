@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { useBatchStore } from '../../stores/batch-store'
 import { useIpc } from '../../hooks/useIpc'
 
@@ -113,6 +113,19 @@ export default function FileUpload() {
   } = useBatchStore()
 
   const currentGroup = findGroup(selectedDbType)
+
+  // sheet1 实际使用的库名 vs sheet2 已配置库名对照：
+  // 建模按「库名」取 sheet2 清单，不一致的库名会被跳过建模——提前在上传环节暴露
+  const dbCheck = useMemo(() => {
+    if (!tableConfigMap) return null
+    const configured = new Set(Object.keys(tableConfigMap)) // 键已归一化小写
+    const usedDbs = [...new Set(items.map((it) => (it.database || '').trim()).filter(Boolean))]
+    if (!usedDbs.length) return { type: 'no-db-col' as const }
+    const unmatched = usedDbs.filter((d) => !configured.has(d.toLowerCase()))
+    return unmatched.length
+      ? { type: 'mismatch' as const, unmatched, configured: [...configured] }
+      : { type: 'ok' as const }
+  }, [tableConfigMap, items])
 
   const handleDbTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const typeName = e.target.value
@@ -231,6 +244,17 @@ export default function FileUpload() {
       {tableConfigMap && Object.keys(tableConfigMap).length > 0 && (
         <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
           🗂️ 已加载 sheet2 表配置：{Object.keys(tableConfigMap).length} 库 / {Object.values(tableConfigMap).reduce((n, ts) => n + ts.length, 0)} 表（各数据源按其库名取对应清单过滤）
+        </div>
+      )}
+      {dbCheck?.type === 'mismatch' && (
+        <div className="error-message mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
+          ⚠️ 以下库名未在 sheet2 配置，建模将被跳过：{dbCheck.unmatched.join('、')}
+          （sheet2 已配置：{dbCheck.configured.join('、')}；请核对 sheet1「数据库名」与 sheet2 第 1 列）
+        </div>
+      )}
+      {dbCheck?.type === 'no-db-col' && (
+        <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
+          ℹ️ 当前数据源无库名信息，sheet2 按表名全局唯一匹配（同名表跨库时可能失配）
         </div>
       )}
     </div>
