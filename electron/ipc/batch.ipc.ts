@@ -212,16 +212,16 @@ async function createModelsForDatasource(
   const filterResult = filterTablesByConfig(allTableNames, tableConfigMap, databaseName)
   let filterMsg = ''
   if (filterResult?.note === 'db-miss') {
-    // sheet2 有配置但没配当前库名（多为库名笔误）：直接跳过建模。
+    // 库名与表名均无交集：sheet2 配置的表不在此数据源，跳过建模。
     // 静默全量会把整库表建成一堆错误模型，事后清理远比补配置麻烦。
     const configured = Object.keys(tableConfigMap).join('、')
     console.warn(
-      `[model] sheet2 已配置 ${Object.keys(tableConfigMap).length} 个库，但未配置库名「${databaseName}」，跳过建模`,
+      `[model] sheet2 配置的表均不在数据源中（库名「${databaseName}」未命中，sheet2 已配置库: ${configured}），跳过建模`,
     )
     itemResult.modelStatus = 'skipped'
     itemResult.modelMsg =
-      `sheet2 未配置库名「${databaseName}」，已跳过建模（sheet2 已配置: ${configured}；` +
-      `请核对 sheet1「数据库名」与 sheet2 第 1 列一致，或清空 sheet2 恢复全量）`
+      `sheet2 配置的表均不在该数据源中，已跳过建模（sheet1 库名「${databaseName}」，sheet2 已配置: ${configured}；` +
+      `请核对 sheet2 的库名/表名，或清空 sheet2 恢复全量）`
     itemResult.modelTotal = 0
     itemResult.modelCreated = 0
     return
@@ -234,9 +234,11 @@ async function createModelsForDatasource(
     }
     const keptSet = new Set(filterResult.kept)
     const matched = tables.filter((t) => keptSet.has(String(t.value ?? '')))
+    // 库名未命中时走表名兜底（sheet1 物理库名 vs sheet2 业务库名的常态），提示口径与实际策略一致
+    const tag = filterResult.note === 'table-fallback' ? '库名未命中，按表名兜底' : '按 sheet2 过滤'
     filterMsg = filterResult.missing.length
-      ? `（按 sheet2 过滤 ${matched.length}/${tables.length}，库中缺: ${filterResult.missing.slice(0, 5).join(', ')}${filterResult.missing.length > 5 ? '…' : ''}）`
-      : `（按 sheet2 过滤 ${matched.length}/${tables.length}）`
+      ? `（${tag} ${matched.length}/${tables.length}，库中缺: ${filterResult.missing.slice(0, 5).join(', ')}${filterResult.missing.length > 5 ? '…' : ''}）`
+      : `（${tag} ${matched.length}/${tables.length}）`
     tables = matched
   }
   const unmatchedFieldNotes: string[] = []

@@ -247,9 +247,9 @@ export default function FileUpload() {
         </div>
       )}
       {dbCheck?.type === 'mismatch' && (
-        <div className="error-message mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
-          ⚠️ 以下库名未在 sheet2 配置，建模将被跳过：{dbCheck.unmatched.join('、')}
-          （sheet2 已配置：{dbCheck.configured.join('、')}；请核对 sheet1「数据库名」与 sheet2 第 1 列）
+        <div className="text-muted mt-1" style={{ textAlign: 'center', fontSize: '0.8em' }}>
+          ℹ️ 以下库名未在 sheet2 配置，将按表名匹配建模清单：{dbCheck.unmatched.join('、')}
+          （sheet2 已配置：{dbCheck.configured.join('、')}）
         </div>
       )}
       {dbCheck?.type === 'no-db-col' && (
