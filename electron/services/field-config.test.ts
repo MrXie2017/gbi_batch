@@ -213,6 +213,23 @@ describe('buildModelNameMap / matchModelName（表级模型名：第 3 列「中
     expect(matchModelName(buildModelNameMap(rows), ' dbA ', ' t ')).toBe('中文名')
   })
 
+  it('库名失配但表名全局唯一 → 按「|表名」兜底命中', () => {
+    const rows: string[][] = [
+      ['ODS_DB', 't_user', '用户表', 'name', '', '', '', '', '', ''],
+      ['ODS_DB', 't_order', '订单表', 'id', '', '', '', '', '', ''],
+    ]
+    // sheet1 填的库名 ods 与 sheet2 的 ODS_DB 不同：精确键失配，兜底救回中文名
+    expect(matchModelName(buildModelNameMap(rows), 'ods', 't_user')).toBe('用户表')
+  })
+
+  it('库名失配且表名跨库重复 → 放弃兜底（避免误配）', () => {
+    const rows: string[][] = [
+      ['dbA', 't_user', '甲库用户表', 'name', '', '', '', '', '', ''],
+      ['dbB', 't_user', '乙库用户表', 'id', '', '', '', '', '', ''],
+    ]
+    expect(matchModelName(buildModelNameMap(rows), 'dbC', 't_user')).toBeUndefined()
+  })
+
   it('空行数组 → 空 map', () => {
     expect(Object.keys(buildModelNameMap([]))).toHaveLength(0)
   })
@@ -377,10 +394,22 @@ describe('buildTableConfigMap / filterTablesByConfig（按 sheet2 过滤建模�
     expect(r.missing).toEqual(['t_user'])
   })
 
-  it('未配置该库 → note=db-miss（调用方显式提示，而非静默全量）', () => {
+  it('库名与表名均无交集 → note=db-miss（调用方跳过建模，而非静默全量）', () => {
     const r = filterTablesByConfig(['t1'], map, 'dbC')!
     expect(r.note).toBe('db-miss')
-    expect(r.kept).toEqual(['t1'])
+    expect(r.kept).toEqual([])
+    expect(r.missing).toEqual([])
+  })
+
+  it('库名失配但表名有交集 → 按表名兜底过滤（sheet1 物理库名 vs sheet2 业务库名的常态）', () => {
+    // 0918 实测场景：sheet1 填连接库名 baidu_ai，sheet2 填业务库名
+    const map = buildTableConfigMap([
+      ['国土空间规划表格数据', 'SJ_CZJSBSYQ', '', 'OBJECTID', '', '', '', '', '', ''],
+      ['国土空间规划表格数据', 'SJ_CZTXGMJGB', '', 'id', '', '', '', '', '', ''],
+    ])
+    const r = filterTablesByConfig(['SJ_CZJSBSYQ', 't_other', 'SJ_CZTXGMJGB'], map, 'baidu_ai')!
+    expect(r.note).toBe('table-fallback')
+    expect(r.kept).toEqual(['SJ_CZJSBSYQ', 'SJ_CZTXGMJGB'])
     expect(r.missing).toEqual([])
   })
 

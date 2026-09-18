@@ -81,17 +81,24 @@ describe('buildModelSavePayload 字段覆盖', () => {
     expect((payload.config.dimensions.f1 as any).format).toBeUndefined()
   })
 
-  it('回归：匹配键第一段是 sheet1「数据库名」(databaseName)，不是「数据源名称」(datasourceName)', () => {
+  it('回归：精确匹配第一段是 sheet1「数据库名」；库名失配时按表名+字段名兜底，跨库重复才放弃', () => {
     // 模拟真实场景：数据源名称=多表数据库测试1，数据库名=baidu_ai；sheet2「数据库名」列填 baidu_ai
     const schema = [field('f1', 'region', 'string')]
     const map: FieldConfigMap = {
       [`baidu_ai|test|region`]: { alias: '行政区' },
     }
-    // 传数据库名 baidu_ai → 命中
+    // 传数据库名 baidu_ai → 精确命中
     const hit = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', 'baidu_ai', map)
     expect(hit.config.dimensions.f1.alias).toBe('行政区')
-    // 误传数据源名称 多表数据库测试1 → 不命中，走默认（alias 回退为字段名）
-    const miss = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', '多表数据库测试1', map)
+    // 库名不同（如误传数据源名称，或 sheet2 填业务库名）→ 表名+字段名全局唯一，兜底命中
+    const fallback = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', '多表数据库测试1', map)
+    expect(fallback.config.dimensions.f1.alias).toBe('行政区')
+    // 跨库同表同字段两条配置 → 兜底放弃，走默认（alias 回退为字段名）
+    const dup: FieldConfigMap = {
+      ...map,
+      [`other_db|test|region`]: { alias: '别库名' },
+    }
+    const miss = SugarApiClient.buildModelSavePayload('hash', 'test', 'ds_hash', 0, schema, 'test', '多表数据库测试1', dup)
     expect(miss.config.dimensions.f1.alias).toBe('region')
   })
 

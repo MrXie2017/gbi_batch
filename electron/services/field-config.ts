@@ -232,7 +232,11 @@ function lookupUniqueBySuffix<T>(map: Record<string, T>, suffix: string): T | un
   return hits.length === 1 ? map[hits[0]] : undefined
 }
 
-/** 按「数据库名|表名|字段名」查找配置；未命中返回 undefined */
+/**
+ * 按「数据库名|表名|字段名」查找配置；未命中返回 undefined。
+ * 精确键未命中时（库名为空的 JDBC 类型，或 sheet1 物理库名与 sheet2 业务库名不一致），
+ * 按「|表名|字段名」全局唯一命中兜底；多个候选 → 放弃，避免误配。
+ */
 export function matchField(
   map: FieldConfigMap,
   databaseName: string,
@@ -241,11 +245,7 @@ export function matchField(
 ): FieldConfig | undefined {
   const exact = map[fieldKey(databaseName, tableName, fieldName)]
   if (exact) return exact
-  // JDBC 等类型 sheet1 无「数据库名」列：库名为空时按「表名|字段名」全局唯一命中兜底
-  if (!(databaseName || '').trim()) {
-    return lookupUniqueBySuffix(map, `|${norm(tableName)}|${norm(fieldName)}`)
-  }
-  return undefined
+  return lookupUniqueBySuffix(map, `|${norm(tableName)}|${norm(fieldName)}`)
 }
 
 /** 列出 sheet2 为某表配置过的字段名（已归一化；用于诊断「配置了但库里不存在」的拼写错误） */
@@ -256,10 +256,8 @@ export function listConfiguredFields(
 ): string[] {
   const keys = Object.keys(map)
   const direct = keys.filter((k) => k.startsWith(`${norm(databaseName)}|${norm(tableName)}|`))
-  if (direct.length || (databaseName || '').trim()) {
-    return direct.map((k) => k.split('|').pop() || '')
-  }
-  // 库名为空（JDBC 等类型）：与 matchField 的后缀兜底同口径，按「|表名|」中段收集
+  if (direct.length) return direct.map((k) => k.split('|').pop() || '')
+  // 库名失配（JDBC 无库名列，或 sheet1/sheet2 库名语义不同）：与 matchField 兜底同口径，按「|表名|」中段收集
   const mid = `|${norm(tableName)}|`
   return keys.filter((k) => k.includes(mid)).map((k) => k.split(mid)[1] || '')
 }
@@ -298,7 +296,11 @@ export function buildModelNameMap(
   return map
 }
 
-/** 按「数据库名|表名」查找模型名；未命中返回 undefined（调用方回退默认名） */
+/**
+ * 按「数据库名|表名」查找模型名；未命中返回 undefined（调用方回退默认名）。
+ * 精确键未命中时（库名为空的 JDBC 类型，或 sheet1/sheet2 库名写法不一致），
+ * 按「|表名」全局唯一命中兜底（与 matchField 同口径）；多个候选 → 放弃，避免误配。
+ */
 export function matchModelName(
   map: ModelNameMap,
   databaseName: string,
@@ -306,11 +308,7 @@ export function matchModelName(
 ): string | undefined {
   const exact = map[modelKey(databaseName, tableName)]
   if (exact) return exact
-  // 库名为空（JDBC 等类型）时按「|表名」全局唯一命中兜底
-  if (!(databaseName || '').trim()) {
-    return lookupUniqueBySuffix(map, `|${norm(tableName)}`)
-  }
-  return undefined
+  return lookupUniqueBySuffix(map, `|${norm(tableName)}`)
 }
 
 // ==================== 表级建模清单（只建 sheet2 配置过的表） ====================
@@ -334,21 +332,27 @@ export function buildTableConfigMap(
   return map
 }
 
-/** filterTablesByConfig 的结果；note='db-miss' 表示 sheet2 有配置但未配置该库名 */
+/** filterTablesByConfig 的结果 */
 export interface TableFilterResult {
   /** 清单内且数据源中存在的表（保持输入顺序） */
   kept: string[]
   /** 清单内但数据源中不存在的表（原始写法，去重） */
   missing: string[]
-  /** 'db-miss'：sheet2 有配置但未配置该库名（调用方应显式提示，而非静默全量） */
-  note: '' | 'db-miss'
+  /**
+   * ''：库名精确命中，按该库清单过滤
+   * 'table-fallback'：库名未命中，按「配置表名 ∩ 数据源表名」兜底过滤
+   *   （sheet1 常填物理库名而 sheet2 填业务库名，库名本就不保证同源）
+   * 'db-miss'：库名与表名均无交集——配置的表不在此数据源，调用方应跳过建模并提示
+   */
+  note: '' | 'table-fallback' | 'db-miss'
 }
 
 /**
  * 按 sheet2 表清单过滤数据源中的表名。
  * - 返回 null：sheet2 无任何表配置 → 不过滤（全量，兼容无 sheet2 的旧文件）
- * - note='db-miss'：sheet2 有配置但未配置该库名（多为库名笔误）→ 不过滤，由调用方提示
- * - 库名为空（JDBC 等类型）时，以全部配置表的并集兜底
+ * - 库名精确命中：按该库清单过滤
+ * - 库名未命中（含库名为空的 JDBC 类型）：按「全部配置表名 ∩ 数据源表名」兜底，
+ *   与 matchModelName/matchField 的表名兜底同口径；无交集 → note='db-miss'
  */
 export function filterTablesByConfig(
   tableNames: string[],
@@ -361,14 +365,23 @@ export function filterTablesByConfig(
   if (!rawNames && !db) {
     rawNames = Object.values(tableConfigMap).flat()
   }
-  if (!rawNames) return { kept: [...tableNames], missing: [], note: 'db-miss' }
-  const existing = new Set(tableNames.map((t) => norm(t)))
-  const wanted = new Set(rawNames.map((t) => norm(t)))
-  return {
-    kept: tableNames.filter((t) => wanted.has(norm(t))),
-    missing: [...new Set(rawNames.filter((t) => !existing.has(norm(t))))],
-    note: '',
+  if (rawNames) {
+    const existing = new Set(tableNames.map((t) => norm(t)))
+    const wanted = new Set(rawNames.map((t) => norm(t)))
+    return {
+      kept: tableNames.filter((t) => wanted.has(norm(t))),
+      missing: [...new Set(rawNames.filter((t) => !existing.has(norm(t))))],
+      note: '',
+    }
   }
+  // 库名失配：按配置表名兜底（表名是强标识；一个数据源一张物理库，同名冲突罕见，
+  // 冲突时交集会同时含两张，属可接受的保守行为）
+  const allConfigured = new Set(Object.values(tableConfigMap).flat().map((t) => norm(t)))
+  const byTable = tableNames.filter((t) => allConfigured.has(norm(t)))
+  if (byTable.length === 0) {
+    return { kept: [], missing: [], note: 'db-miss' }
+  }
+  return { kept: byTable, missing: [], note: 'table-fallback' }
 }
 
 // ==================== sheet2 总入口 ====================
