@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SugarApiClient } from '../services/sugar-api'
+import type { TableFieldSchema } from '../services/sugar-api'
 import { resolveDbType } from '../services/db-types'
 import type { FieldConfigMap, ModelNameMap, TableConfigMap } from '../services/field-config'
 import { matchModelName, filterTablesByConfig, listConfiguredFields } from '../services/field-config'
@@ -234,7 +235,7 @@ async function createModelsForDatasource(
 
   if (tables.length === 0) {
     itemResult.modelStatus = 'success'
-    itemResult.modelMsg = filter
+    itemResult.modelMsg = filterResult && filterResult.note !== 'db-miss'
       ? `sheet2 配置的表均不在该数据源中，未创建模型${filterMsg}`
       : '数据源中无表'
     itemResult.modelTotal = 0
@@ -277,9 +278,10 @@ async function createModelsForDatasource(
         console.log(`[model] 获取表结构失败 "${tableName}": ${schemaResult.msg}`)
         continue
       }
+      const schema: TableFieldSchema[] = schemaResult.data
 
       // 诊断：sheet2 配置了但表中不存在的字段（多为拼写/大小写笔误），告警并记入结果消息
-      const schemaFields = new Set(schemaResult.data.map((f) => (f.name || '').trim().toLowerCase()))
+      const schemaFields = new Set(schema.map((f) => (f.name || '').trim().toLowerCase()))
       const unmatchedFields = listConfiguredFields(fieldConfigMap, databaseName, tableName)
         .filter((f) => !schemaFields.has(f))
       if (unmatchedFields.length) {
@@ -295,7 +297,7 @@ async function createModelsForDatasource(
         modelName,
         databaseHash,
         dbType,
-        schemaResult.data,
+        schema,
         tableName,
         databaseName,
         fieldConfigMap,
